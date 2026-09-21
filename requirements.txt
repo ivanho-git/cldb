@@ -1,0 +1,14 @@
+sqlalchemy
+sqlglot
+torch
+sentence-transformers
+qdrant-client
+avalanche-lib
+mlflow
+streamlit
+python-dotenv
+pytest
+pandas
+prometheus-client
+redis
+kombu

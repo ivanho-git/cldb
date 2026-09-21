@@ -1,0 +1,158 @@
+# DA1 – ER/EER Modeling and Normalization
+**Schedule:** 16-07-2026 to 31-07-2026  
+**Submission Deadline:** 31-07-2026  
+**Project:** Continual Learning Database Engine (CLDB) Metadata Repository  
+
+## 1. ER/EER Model Design
+
+### Entities and Key Attributes
+1. **User**: Represents a database user.
+   - Attributes: `user_id` (PK), `username`, `created_at`
+2. **Database**: Represents a tracked database instance.
+   - Attributes: `db_id` (PK), `db_name`, `created_at`
+3. **Table**: Represents a database table.
+   - Attributes: `table_id` (PK), `schema_name`, `table_name`, `row_count_estimate`
+4. **Column**: Represents a column within a table.
+   - Attributes: `column_id` (PK), `column_name`, `data_type`
+5. **Index**: Represents a database index.
+   - Attributes: `index_id` (PK), `index_name`, `is_active`, `created_at`, `dropped_at`
+6. **QueryLog**: Records executed SQL queries.
+   - Attributes: `query_id` (PK), `query_text`, `query_hash`, `execution_time_ms`, `executed_at`
+7. **ExecutionPlan**: Stores query execution plans.
+   - Attributes: `plan_id` (PK), `plan_json`, `estimated_cost`, `created_at`
+8. **PerformanceMetric**: Logs performance stats for tables.
+   - Attributes: `metric_id` (PK), `metric_name`, `metric_value`, `recorded_at`
+9. **OptimizationDecision**: Records the AI model's index decisions.
+   - Attributes: `decision_id` (PK), `action`, `confidence_score`, `estimated_cost_saving`, `status`, `created_at`, `executed_at`
+10. **OptimizationHistory**: Tracks state changes of optimization decisions.
+    - Attributes: `history_id` (PK), `action`, `status`, `recorded_at`
+11. **ReplayBufferMetadata**: ML replay buffer tracking.
+    - Attributes: `buffer_id` (PK), `importance_score`, `is_active`, `added_at`
+
+### 1.1 Basic ER Diagram
+This diagram shows the core entities and their cardinalities.
+
+```mermaid
+erDiagram
+    DATABASE ||--o{ TABLE : contains
+    DATABASE ||--o{ QUERY_LOG : logs
+    USER ||--o{ QUERY_LOG : issues
+    TABLE ||--o{ COLUMN : has
+    TABLE ||--o{ INDEX : has
+    TABLE ||--o{ PERFORMANCE_METRIC : measures
+    TABLE ||--o{ OPTIMIZATION_DECISION : targeted_by
+    INDEX }o--o{ COLUMN : uses_columns
+    OPTIMIZATION_DECISION }o--o{ COLUMN : affects_columns
+    QUERY_LOG ||--o{ EXECUTION_PLAN : generates
+    QUERY_LOG ||--o| REPLAY_BUFFER_METADATA : stored_as
+    OPTIMIZATION_DECISION ||--o{ OPTIMIZATION_HISTORY : tracked_by
+```
+
+### 1.2 Enhanced ER (EER) Diagram
+This EER diagram includes generalization/specialization for the `OptimizationDecision` entity into `CreateIndexDecision` and `DropIndexDecision` subclasses based on the `action` attribute. It also details key attributes.
+
+```mermaid
+classDiagram
+    class DATABASE {
+        +int db_id (PK)
+        +String db_name
+    }
+    class TABLE {
+        +int table_id (PK)
+        +String schema_name
+        +String table_name
+    }
+    class COLUMN {
+        +int column_id (PK)
+        +String column_name
+        +String data_type
+    }
+    class OPTIMIZATION_DECISION {
+        <<Superclass>>
+        +int decision_id (PK)
+        +float confidence_score
+        +String status
+    }
+    class CREATE_INDEX_DECISION {
+        <<Subclass>>
+        +String action = 'CREATE_INDEX'
+    }
+    class DROP_INDEX_DECISION {
+        <<Subclass>>
+        +String action = 'DROP_INDEX'
+    }
+    class QUERY_LOG {
+        +int query_id (PK)
+        +String query_text
+        +float execution_time_ms
+    }
+    class USER {
+        +int user_id (PK)
+        +String username
+    }
+    class INDEX {
+        +int index_id (PK)
+        +String index_name
+        +boolean is_active
+    }
+
+    OPTIMIZATION_DECISION <|-- CREATE_INDEX_DECISION
+    OPTIMIZATION_DECISION <|-- DROP_INDEX_DECISION
+    
+    DATABASE "1" *-- "*" TABLE : contains
+    TABLE "1" *-- "*" COLUMN : has
+    TABLE "1" -- "*" OPTIMIZATION_DECISION : targeted_by
+    TABLE "1" *-- "*" INDEX : has
+    INDEX "*" -- "*" COLUMN : uses
+    USER "1" -- "*" QUERY_LOG : issues
+    DATABASE "1" -- "*" QUERY_LOG : logs
+```
+
+## 2. Converting the ER/EER Model into Relations
+
+The models are mapped into the following relational schemas. Primary keys are denoted with **(PK)** and foreign keys with *(FK)*. For the EER generalization, a single-table strategy is used due to overlapping attributes, differentiated by the `action` attribute.
+
+- **users** (<u>user_id (PK)</u>, username, created_at)
+- **databases** (<u>db_id (PK)</u>, db_name, created_at)
+- **tables** (<u>table_id (PK)</u>, *db_id (FK)*, schema_name, table_name, row_count_estimate)
+- **columns** (<u>column_id (PK)</u>, *table_id (FK)*, column_name, data_type)
+- **indexes** (<u>index_id (PK)</u>, *table_id (FK)*, index_name, is_active, created_at, dropped_at)
+- **index_columns** (<u>*index_id (PK, FK)*, *column_id (PK, FK)*</u>)
+- **query_logs** (<u>query_id (PK)</u>, *db_id (FK)*, *user_id (FK)*, query_text, query_hash, execution_time_ms, executed_at)
+- **execution_plans** (<u>plan_id (PK)</u>, *query_id (FK)*, plan_json, estimated_cost, created_at)
+- **performance_metrics** (<u>metric_id (PK)</u>, *table_id (FK)*, metric_name, metric_value, recorded_at)
+- **optimization_decisions** (<u>decision_id (PK)</u>, *table_id (FK)*, action, confidence_score, estimated_cost_saving, status, created_at, executed_at)
+- **optimization_decision_columns** (<u>*decision_id (PK, FK)*, *column_id (PK, FK)*</u>)
+- **optimization_history** (<u>history_id (PK)</u>, *decision_id (FK)*, *table_id (FK)*, action, status, recorded_at)
+- **replay_buffer_metadata** (<u>buffer_id (PK)</u>, *query_id (FK)*, importance_score, is_active, added_at)
+
+## 3. Normalization (Up to BCNF)
+
+### First Normal Form (1NF)
+**Condition:** All attributes must contain atomic values, and each record must be unique.
+**Analysis:** The current schema adheres strictly to 1NF. There are no multi-valued attributes, no arrays used within the data models, and every table has a defined `PRIMARY KEY`.
+
+### Second Normal Form (2NF)
+**Condition:** Must be in 1NF, and all non-key attributes must be fully functionally dependent on the entire primary key (no partial dependencies).
+**Analysis:** 
+- Most entities utilize surrogate keys (`SERIAL PRIMARY KEY`), which consist of a single attribute. Single-column primary keys cannot have partial dependencies. 
+- The associative/junction tables (`index_columns`, `optimization_decision_columns`) use a composite primary key (e.g., `(index_id, column_id)`). Neither table has non-key attributes, meaning 2NF is automatically satisfied.
+
+### Third Normal Form (3NF)
+**Condition:** Must be in 2NF, and no non-key attribute is transitively dependent on the primary key.
+**Analysis:** 
+- In `tables`, `table_name` and `schema_name` depend strictly on `table_id`.
+- In `query_logs`, attributes like `query_text` and `execution_time_ms` depend strictly on `query_id`.
+- **Transitive Dependency Found:** In the `optimization_history` table, both `decision_id` and `table_id` are stored. 
+  - `history_id -> decision_id`
+  - `decision_id -> table_id` (via the `optimization_decisions` table).
+  - Therefore, `history_id -> table_id` is a transitive dependency.
+- **Resolution:** To achieve strict 3NF for academic compliance, `table_id` should logically be removed from the `optimization_history` relation, as it can be derived by joining the `optimization_decisions` table. 
+
+### Boyce-Codd Normal Form (BCNF)
+**Condition:** For every non-trivial functional dependency X -> Y, X must be a superkey.
+**Analysis:** 
+- In the `tables` relation: The candidate keys are `table_id` and the composite `(db_id, schema_name, table_name)` (due to the `UNIQUE` constraint). Both uniquely identify the row and act as superkeys.
+- In the `columns` relation: Candidate keys are `column_id` and `(table_id, column_name)`. Both are valid superkeys.
+- In `indexes` and `databases`, explicit `UNIQUE` constraints (`index_name`, `db_name`) ensure that all determinants are superkeys.
+- With the 3NF transitive dependency in `optimization_history` acknowledged and resolved in theory, the schema is **fully BCNF compliant**. All functional dependencies originate from valid superkeys.

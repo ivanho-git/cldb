@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DA1 - ER/EER Modeling and Normalization</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2, h3 {
+            color: #2c3e50;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 4px;
+            border-radius: 4px;
+            font-family: Consolas, monospace;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 20px 0;
+        }
+        @media print {
+            body {
+                padding: 0;
+            }
+            .page-break {
+                page-break-before: always;
+            }
+        }
+        .print-btn {
+            display: block;
+            width: 100%;
+            padding: 15px;
+            background-color: #3498db;
+            color: white;
+            text-align: center;
+            font-size: 18px;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        @media print {
+            .print-btn {
+                display: none;
+            }
+        }
+    </style>
+    <!-- Include Mermaid.js -->
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+        
+        // Auto print after a tiny delay so mermaid can render
+        setTimeout(() => {
+            // Uncomment to auto print, but manual click is safer
+            // window.print();
+        }, 2000);
+    </script>
+</head>
+<body>
+
+    <button class="print-btn" onclick="window.print()">Click here to Save as PDF</button>
+
+    <h1>DA1 – ER/EER Modeling and Normalization</h1>
+    <p><strong>Schedule:</strong> 16-07-2026 to 31-07-2026<br>
+    <strong>Submission Deadline:</strong> 31-07-2026<br>
+    <strong>Project:</strong> Continual Learning Database Engine (CLDB) Metadata Repository</p>
+
+    <h2>1. ER/EER Model Design</h2>
+
+    <h3>Entities and Key Attributes</h3>
+    <ul>
+        <li><strong>User</strong>: <code>user_id</code> (PK), <code>username</code>, <code>created_at</code></li>
+        <li><strong>Database</strong>: <code>db_id</code> (PK), <code>db_name</code>, <code>created_at</code></li>
+        <li><strong>Table</strong>: <code>table_id</code> (PK), <code>schema_name</code>, <code>table_name</code>, <code>row_count_estimate</code></li>
+        <li><strong>Column</strong>: <code>column_id</code> (PK), <code>column_name</code>, <code>data_type</code></li>
+        <li><strong>Index</strong>: <code>index_id</code> (PK), <code>index_name</code>, <code>is_active</code></li>
+        <li><strong>QueryLog</strong>: <code>query_id</code> (PK), <code>query_text</code>, <code>execution_time_ms</code></li>
+        <li><strong>ExecutionPlan</strong>: <code>plan_id</code> (PK), <code>estimated_cost</code></li>
+        <li><strong>PerformanceMetric</strong>: <code>metric_id</code> (PK), <code>metric_name</code>, <code>metric_value</code></li>
+        <li><strong>OptimizationDecision</strong>: <code>decision_id</code> (PK), <code>action</code>, <code>status</code></li>
+        <li><strong>OptimizationHistory</strong>: <code>history_id</code> (PK), <code>action</code>, <code>status</code></li>
+        <li><strong>ReplayBufferMetadata</strong>: <code>buffer_id</code> (PK), <code>importance_score</code></li>
+    </ul>
+
+    <h3>1.1 Basic ER Diagram</h3>
+    <div class="mermaid">
+erDiagram
+    DATABASE ||--o{ TABLE : contains
+    DATABASE ||--o{ QUERY_LOG : logs
+    USER ||--o{ QUERY_LOG : issues
+    TABLE ||--o{ COLUMN : has
+    TABLE ||--o{ INDEX : has
+    TABLE ||--o{ PERFORMANCE_METRIC : measures
+    TABLE ||--o{ OPTIMIZATION_DECISION : targeted_by
+    INDEX }o--o{ COLUMN : uses_columns
+    OPTIMIZATION_DECISION }o--o{ COLUMN : affects_columns
+    QUERY_LOG ||--o{ EXECUTION_PLAN : generates
+    QUERY_LOG ||--o| REPLAY_BUFFER_METADATA : stored_as
+    OPTIMIZATION_DECISION ||--o{ OPTIMIZATION_HISTORY : tracked_by
+    </div>
+
+    <div class="page-break"></div>
+
+    <h3>1.2 Enhanced ER (EER) Diagram</h3>
+    <p>This EER diagram includes generalization for the <code>OptimizationDecision</code> entity into subclasses based on the <code>action</code> attribute.</p>
+    <div class="mermaid">
+classDiagram
+    class DATABASE {
+        +int db_id (PK)
+        +String db_name
+    }
+    class TABLE {
+        +int table_id (PK)
+        +String schema_name
+        +String table_name
+    }
+    class COLUMN {
+        +int column_id (PK)
+        +String column_name
+        +String data_type
+    }
+    class OPTIMIZATION_DECISION {
+        &lt;&lt;Superclass&gt;&gt;
+        +int decision_id (PK)
+        +float confidence_score
+        +String status
+    }
+    class CREATE_INDEX_DECISION {
+        &lt;&lt;Subclass&gt;&gt;
+        +String action = 'CREATE_INDEX'
+    }
+    class DROP_INDEX_DECISION {
+        &lt;&lt;Subclass&gt;&gt;
+        +String action = 'DROP_INDEX'
+    }
+    class QUERY_LOG {
+        +int query_id (PK)
+        +String query_text
+    }
+    class USER {
+        +int user_id (PK)
+    }
+    class INDEX {
+        +int index_id (PK)
+        +String index_name
+    }
+
+    OPTIMIZATION_DECISION &lt;|-- CREATE_INDEX_DECISION
+    OPTIMIZATION_DECISION &lt;|-- DROP_INDEX_DECISION
+    
+    DATABASE "1" *-- "*" TABLE : contains
+    TABLE "1" *-- "*" COLUMN : has
+    TABLE "1" -- "*" OPTIMIZATION_DECISION : targeted_by
+    TABLE "1" *-- "*" INDEX : has
+    INDEX "*" -- "*" COLUMN : uses
+    USER "1" -- "*" QUERY_LOG : issues
+    DATABASE "1" -- "*" QUERY_LOG : logs
+    </div>
+
+    <div class="page-break"></div>
+
+    <h2>2. Converting the ER/EER Model into Relations</h2>
+    <ul>
+        <li><strong>users</strong> (<u>user_id (PK)</u>, username, created_at)</li>
+        <li><strong>databases</strong> (<u>db_id (PK)</u>, db_name, created_at)</li>
+        <li><strong>tables</strong> (<u>table_id (PK)</u>, <em>db_id (FK)</em>, schema_name, table_name, row_count_estimate)</li>
+        <li><strong>columns</strong> (<u>column_id (PK)</u>, <em>table_id (FK)</em>, column_name, data_type)</li>
+        <li><strong>indexes</strong> (<u>index_id (PK)</u>, <em>table_id (FK)</em>, index_name, is_active, created_at, dropped_at)</li>
+        <li><strong>index_columns</strong> (<u><em>index_id (PK, FK)</em>, <em>column_id (PK, FK)</em></u>)</li>
+        <li><strong>query_logs</strong> (<u>query_id (PK)</u>, <em>db_id (FK)</em>, <em>user_id (FK)</em>, query_text, query_hash, execution_time_ms, executed_at)</li>
+        <li><strong>execution_plans</strong> (<u>plan_id (PK)</u>, <em>query_id (FK)</em>, plan_json, estimated_cost, created_at)</li>
+        <li><strong>performance_metrics</strong> (<u>metric_id (PK)</u>, <em>table_id (FK)</em>, metric_name, metric_value, recorded_at)</li>
+        <li><strong>optimization_decisions</strong> (<u>decision_id (PK)</u>, <em>table_id (FK)</em>, action, confidence_score, status, created_at)</li>
+        <li><strong>optimization_decision_columns</strong> (<u><em>decision_id (PK, FK)</em>, <em>column_id (PK, FK)</em></u>)</li>
+        <li><strong>optimization_history</strong> (<u>history_id (PK)</u>, <em>decision_id (FK)</em>, <em>table_id (FK)</em>, action, status, recorded_at)</li>
+        <li><strong>replay_buffer_metadata</strong> (<u>buffer_id (PK)</u>, <em>query_id (FK)</em>, importance_score, is_active, added_at)</li>
+    </ul>
+
+    <h2>3. Normalization (Up to BCNF)</h2>
+    
+    <h3>First Normal Form (1NF)</h3>
+    <p><strong>Condition:</strong> All attributes must contain atomic values, and each record must be unique.<br>
+    <strong>Analysis:</strong> The current schema adheres strictly to 1NF. There are no multi-valued attributes, no arrays used within the data models, and every table has a defined <code>PRIMARY KEY</code>.</p>
+
+    <h3>Second Normal Form (2NF)</h3>
+    <p><strong>Condition:</strong> Must be in 1NF, and all non-key attributes must be fully functionally dependent on the entire primary key (no partial dependencies).<br>
+    <strong>Analysis:</strong> Most entities utilize surrogate keys (<code>SERIAL PRIMARY KEY</code>). Single-column primary keys cannot have partial dependencies. The junction tables (<code>index_columns</code>, <code>optimization_decision_columns</code>) use a composite primary key. Neither table has non-key attributes, meaning 2NF is automatically satisfied.</p>
+
+    <h3>Third Normal Form (3NF)</h3>
+    <p><strong>Condition:</strong> Must be in 2NF, and no non-key attribute is transitively dependent on the primary key.<br>
+    <strong>Analysis:</strong> In the <code>optimization_history</code> table, both <code>decision_id</code> and <code>table_id</code> are stored. <code>history_id -&gt; decision_id</code>, and <code>decision_id -&gt; table_id</code>. Therefore, <code>history_id -&gt; table_id</code> is a transitive dependency.<br>
+    <strong>Resolution:</strong> To achieve strict 3NF for academic compliance, <code>table_id</code> should logically be removed from the <code>optimization_history</code> relation, as it can be derived by joining the <code>optimization_decisions</code> table.</p>
+
+    <h3>Boyce-Codd Normal Form (BCNF)</h3>
+    <p><strong>Condition:</strong> For every non-trivial functional dependency X -&gt; Y, X must be a superkey.<br>
+    <strong>Analysis:</strong> In the <code>tables</code> relation, both <code>table_id</code> and the composite <code>(db_id, schema_name, table_name)</code> act as superkeys. With the 3NF transitive dependency in <code>optimization_history</code> resolved, the schema is <strong>fully BCNF compliant</strong>. All functional dependencies originate from valid superkeys.</p>
+
+</body>
+</html>
