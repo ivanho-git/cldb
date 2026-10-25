@@ -1,0 +1,34 @@
+Autonomous index advisors based on machine learning, and the emerging class of
+reinforcement-learning (RL) advisors, are trained once and then deployed under
+the implicit assumption that the query workload is \emph{stationary}. In
+production, workloads are anything but stationary: the query mix drifts across
+daily, weekly, and seasonal phases, so an advisor that was optimal last month is
+often sub-optimal today. Keeping such an advisor current today requires
+\emph{periodic offline retraining}, which is expensive and disrupts service; the
+obvious alternative---naively fine-tuning the deployed policy on the new
+workload---causes \emph{catastrophic forgetting} of the workload phases the
+advisor already mastered. We formulate index selection as a \emph{continual
+reinforcement-learning} problem and introduce \textbf{CLDB}, an online
+index-selection agent that must solve a non-stationary sequence of workload
+phases without retraining from scratch and without forgetting. CLDB couples
+(\(i\)) an off-policy deep Q-network whose state includes the current
+index configuration, (\(ii\)) \emph{drift-triggered elastic weight
+consolidation} that anchors the policy only when workload drift is detected,
+(\(iii\)) a \emph{database-aware prioritized replay} buffer whose priorities
+combine latency impact with workload rarity and are refined by TD errors, and
+(\(iv\)) structural action masking that prevents unsafe schema changes. We build
+a reproducible cost-model benchmark of conflicting workload phases and evaluate
+with the standard continual-learning metrics ACC, BWT, FWT and forgetting. Across
+eight seeds, an online agent that learns without rehearsal \emph{catastrophically
+forgets}: its forgetting is \(\mathcal{F}=0.20\pm0.03\) and its backward transfer
+is strongly negative (\(\mathrm{BWT}=-0.20\)), both significantly worse than a
+replay-based agent ($p<0.05$ paired $t$-test). Restoring a replay buffer reduces
+forgetting to \(\mathcal{F}\approx0.10\text{--}0.13\). Drift-triggered EWC moves
+forgetting in the expected direction but its additional contribution over replay
+is not statistically significant in this benchmark---an honest negative result we
+report. All learning agents beat the static KEEP and RANDOM baselines and
+\emph{match} a structural CREATE heuristic on reward while remaining adaptive. We
+give a full mathematical formulation, a theoretical analysis of the EWC
+objective, the value-network Fisher estimator, the prioritized-replay gradient
+and the consolidation cost, an open-source implementation, and a candid discussion
+of the gap between this prototype and a production-grade study.

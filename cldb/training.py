@@ -303,6 +303,37 @@ class Trainer:
         
         return self.get_history()
     
+    def train_with_dataloader(self, features: torch.Tensor, embeddings: torch.Tensor, context: torch.Tensor,
+                              labels: torch.Tensor, batch_size: int = 32, epochs: int = 5) -> Dict:
+        dataset = TensorDataset(features, embeddings, context, labels)
+        loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+        history = {"loss": [], "accuracy": []}
+        for _ in range(epochs):
+            self.model.train()
+            total_loss = 0.0
+            correct = 0
+            total = 0
+            for batch_features, batch_embeddings, batch_context, batch_labels in loader:
+                batch_features = batch_features.to(self.device)
+                batch_embeddings = batch_embeddings.to(self.device)
+                batch_context = batch_context.to(self.device)
+                batch_labels = batch_labels.to(self.device)
+                x_combined = torch.cat([batch_features, batch_embeddings, batch_context], dim=1)
+                self.optimizer.zero_grad()
+                outputs = self.model(x_combined)
+                loss = self.criterion(outputs, batch_labels)
+                loss.backward()
+                if self.config.gradient_clip_value > 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip_value)
+                self.optimizer.step()
+                total_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += batch_labels.size(0)
+                correct += predicted.eq(batch_labels).sum().item()
+            history["loss"].append(total_loss / len(loader))
+            history["accuracy"].append(100.0 * correct / total)
+        return history
+
     def get_history(self) -> Dict:
         return {"epochs": len(self.history), "final_train_loss": self.history[-1].train_loss if self.history else None,
                 "final_val_loss": self.history[-1].val_loss if self.history else None,

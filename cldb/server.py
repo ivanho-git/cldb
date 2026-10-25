@@ -151,7 +151,7 @@ def serve():
     from cldb.config import get_config
     from cldb.metadata_repo import MetadataRepo
     from cldb.enhanced_vector_store import VectorStore
-    from cldb.production_pipeline import ProductionPipeline
+    from cldb.pipeline import CLDBPipeline
     from cldb.health import HealthChecker
 
     config = get_config()
@@ -159,7 +159,7 @@ def serve():
 
     repo = MetadataRepo()
     vector_store = VectorStore()
-    pipeline = ProductionPipeline(
+    pipeline = CLDBPipeline(
         repo=repo,
         vector_store=vector_store,
         confidence_threshold=config.safety.confidence_threshold,
@@ -193,3 +193,7 @@ def serve():
             time.sleep(1)
     except KeyboardInterrupt:
         _shutdown(None, None)
+
+
+if __name__ == "__main__":
+    serve()

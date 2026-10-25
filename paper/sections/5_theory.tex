@@ -1,0 +1,158 @@
+\section{Theoretical Analysis}
+\label{sec:theory}
+
+We give three results that underpin the design---the interpretation of the EWC
+penalty as a Laplace posterior approximation, the Fisher estimator used for a
+value network, and the unbiasedness of the prioritized-replay gradient---together
+with a cost lemma for drift-triggered consolidation and a bound on parameter
+drift under the EWC penalty. Proofs are in the text.
+
+\subsection{EWC as an approximate Laplace posterior}
+Let \(D_o\) be the data of consolidated phases and \(D_n\) the new phase. Write
+\(\ell(\theta) = -\log p(\theta\mid D_o)\) for the negative log posterior after
+the old data, and let \(\theta^\star = \arg\min_\theta \ell(\theta)\) be its
+mode. If \(\ell\) is twice differentiable and the posterior is concentrated, the
+Laplace approximation gives
+\begin{equation}
+  \log p(\theta\mid D_o) \;\approx\; -\tfrac12(\theta-\theta^\star)^\top H\,(\theta-\theta^\star) + \text{const},
+  \qquad H = \nabla^2 \ell(\theta^\star).
+  \label{eq:laplace}
+\end{equation}
+Applying Bayes' rule sequentially,
+\(p(\theta\mid D_o, D_n) \propto p(D_n\mid\theta)\,p(\theta\mid D_o)\), and taking
+negative logarithms with \eqref{eq:laplace},
+\begin{equation}
+  -\log p(\theta\mid D_o,D_n) \;\approx\;
+  -\log p(D_n\mid\theta) + \tfrac12(\theta-\theta^\star)^\top H(\theta-\theta^\star) + \text{const}.
+\end{equation}
+With a flat prior, the expected Hessian of the negative log-likelihood is the
+Fisher information matrix, \(H \approx \mathrm{diag}(F)\) under the standard
+diagonal approximation. Substituting yields the penalty \eqref{eq:ewc}.
+
+\begin{proposition}[EWC \(=\) penalized MAP]
+\label{prop:ewc}
+Minimizing \(\loss_n(\theta) + \Omega(\theta)\) with \(\Omega\) as in
+\eqref{eq:ewc} is, up to an additive constant, maximum a posteriori estimation of
+\(p(\theta\mid D_o, D_n)\) under a diagonal Laplace approximation of the old
+posterior, where \(\lambda\) trades off the new likelihood against the old
+posterior curvature.
+\end{proposition}
+\begin{proof}[Proof sketch]
+Follows by dropping additive constants in
+\(-\log p(\theta\mid D_o,D_n)\) above and identifying
+\(\loss_n=-\log p(D_n\mid\theta)\). The diagonal Fisher is the diagonal of
+\(H\). \qed
+\end{proof}
+Proposition~\ref{prop:ewc} explains \emph{why} EWC prevents forgetting: parameters
+with large curvature (large \(F_i\)) are those whose perturbation most increases
+the old posterior's negative log-likelihood, so they are anchored most strongly.
+
+\subsection{Fisher estimation for a value network}
+For a classifier, \(F_i=\E[(\partial_{\theta_i}\log p(y\mid x,\theta))^2]\).
+CLDB learns a \emph{value} network, for which the natural analogue is the
+squared gradient of the model output under the regression (Gaussian) likelihood.
+
+\begin{proposition}[Value-network Fisher]
+\label{prop:fisher}
+Let \(f_\theta(s)=\sum_{a}Q_\theta(s,a)\) denote the summed action-value score.
+Under a Gaussian model of the (summed) value with unit variance, the Fisher
+information w.r.t.\ \(\theta_i\) is
+\begin{equation}
+  F_i = \E_{s\sim\mathcal{D}}\Big[\big(\partial_{\theta_i} f_\theta(s)\big)^2\Big].
+  \label{eq:valuefisher}
+\end{equation}
+We estimate \eqref{eq:valuefisher} empirically by averaging the squared gradients
+of the minibatch loss \(\ell=\frac{1}{|b|}\sum_{s\in b} f_\theta(s)\) over a
+set of states drawn from the replay buffer.
+\end{proposition}
+\begin{proof}
+For a Gaussian likelihood \(p(f\mid s,\theta)=\mathcal{N}(f_\theta(s),1)\), the
+score is \(\partial_{\theta_i}\log p(f\mid s,\theta)=(f-f_\theta(s))
+\partial_{\theta_i}f_\theta(s)\); at the model mean \(f=f_\theta(s)\) the Fisher
+reduces to \(\E[(\partial_{\theta_i}f_\theta(s))^2]\), since the residual has unit
+variance and is independent of the gradient term. \qed
+\end{proof}
+Using \(f_\theta=\sum_a Q_\theta(s,a)\) (rather than a single action) makes the
+Fisher reflect the sensitivity of the whole action-value surface, which is
+appropriate because actions are chosen by \(\arg\max\) over that surface.
+
+\subsection{Unbiasedness of the prioritized-replay gradient}
+Let \(\ell_i\) be the per-example loss and let \(p_i\) be the sampling
+probability of \eqref{eq:priority}, \(i=1,\dots,N\). The prioritized estimator
+with importance weight \(w_i = (N p_i)^{-1}\) is
+\(\hat g = \frac{1}{|b|}\sum_{i\in b} w_i \nabla\ell_i\).
+
+\begin{proposition}[Unbiasedness]
+\label{prop:per}
+For \(\beta=1\), \(\E_{i\sim p}[\hat g] = \frac{1}{N}\sum_{i=1}^N \nabla\ell_i\),
+i.e.\ the prioritized estimator is unbiased for the uniform-replay gradient.
+\end{proposition}
+\begin{proof}
+Since $\hat g = \frac{1}{|b|}\sum_{i}\frac{1}{N p_i}\nabla\ell_i$ with i.i.d.\ samples,
+take expectations:
+\(\E[\hat g]=\sum_{i=1}^N p_i\frac{1}{N p_i}\nabla\ell_i=\frac{1}{N}\sum_i\nabla\ell_i\).
+\end{proof}
+For \(\beta<1\) the estimator trades a small bias for reduced variance; this is
+the standard bias--variance trade-off of prioritized replay
+\citep{schaul2016prioritized}. We use the self-normalized weights \eqref{eq:is}
+for numerical stability, which is the usual practical variant.
+
+\subsection{Consolidation cost of the drift-triggered rule}
+\begin{lemma}[Consolidation count]
+\label{lem:consolidation}
+Suppose the drift detector fires at most once per true workload change and does
+not fire within a stationary phase. Then for a stream with \(T\) phases and \(m\)
+detected changes, \(m \le T-1\), and drift-triggered consolidation performs \(m\)
+Fisher computations of cost \(C_F\) each, versus \(T-1\) for boundary-based
+consolidation. Hence its consolidation cost, \(m\,C_F\), is no greater, and it
+places consolidation at the observed change points rather than at an externally
+supplied schedule.
+\end{lemma}
+\begin{proof}
+Each of the \(T-1\) phase boundaries induces at most one detected change, and no
+change is detected inside a stationary phase, so \(m\le T-1\). Both methods pay a
+fixed \(C_F\) per consolidation; the totals are \(mC_F\) and \((T-1)C_F\), and
+\(m\le T-1\) gives the claim.
+\end{proof}
+The lemma isolates the operational advantage of the event-driven rule: the number
+of consolidations tracks the number of \emph{observed} distribution changes
+rather than a pre-specified task count, which is the realistic regime because the
+number and timing of workload phases are unknown a priori. When the assumption
+fails (a false-positive detection), \(m\) grows and so does the cost, a
+limitation we revisit in Section~\ref{sec:discussion}.
+
+\subsection{Bounding parameter drift under the EWC penalty}
+A stronger penalty should leave the solution closer to the consolidated weights,
+which intuitively bounds forgetting.
+
+\begin{proposition}[Drift bound]
+\label{prop:drift}
+Consider a stationary point \(\theta\) of
+\(\loss_n(\theta)+\frac{\lambda}{2}\sum_i F_i(\theta_i-\theta^\star_i)^2\). If
+\(\|\nabla\loss_n(\theta)\|\le G\) and \(F_i\ge F_{\min}>0\) for all \(i\), then
+\begin{equation}
+  \|\theta-\theta^\star\| \;\le\; \frac{G}{\lambda\,F_{\min}}.
+  \label{eq:driftbound}
+\end{equation}
+\end{proposition}
+\begin{proof}
+At a stationary point, \(0=\nabla\loss_n(\theta)+\lambda\,\mathrm{diag}(F)(\theta-\theta^\star)\).
+Hence \(\mathrm{diag}(F)(\theta-\theta^\star)=-\frac{1}{\lambda}\nabla\loss_n(\theta)\),
+and taking norms
+\(\|\theta-\theta^\star\|\le\frac{1}{\lambda F_{\min}}\|\nabla\loss_n(\theta)\|\le G/(\lambda F_{\min})\).
+\end{proof}
+Equation~\eqref{eq:driftbound} formalizes the adapt/retain trade-off: increasing
+\(\lambda\) reduces the maximal drift from the consolidated parameters---and thus
+the potential forgetting of past phases---at the price of slower adaptation to the
+new phase. It also shows why anchoring parameters with small Fisher (small
+\(F_i\), i.e.\ unimportant for old tasks) weakly constrains adaptation, which is
+the mechanism EWC exploits.
+
+\subsection{Remark on the forgetting measure}
+The forgetting measure \(\Fforget\) of \eqref{eq:forgetting} is a
+performance-space quantity, while \eqref{eq:driftbound} bounds parameter-space
+drift. If the old-phase performance is \(L\)-Lipschitz in the parameters, i.e.\
+\(|R_{\text{old}}(\theta)-R_{\text{old}}(\theta^\star)|\le L\|\theta-\theta^\star\|\),
+then \(\Fforget \le L\,G/(\lambda F_{\min})\) under the assumptions of
+Proposition~\ref{prop:drift}. This connects the regularizer directly to the
+metric we report, motivating EWC as a forgetting control rather than a heuristic.

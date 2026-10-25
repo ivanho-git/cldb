@@ -5,6 +5,8 @@ sentence-transformers
 qdrant-client
 avalanche-lib
 mlflow
+fastapi
+uvicorn
 streamlit
 python-dotenv
 pytest

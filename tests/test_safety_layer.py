@@ -1,6 +1,6 @@
 import pytest
 from cldb.metadata_repo import MetadataRepo
-from cldb.safety_layer import SafetyLayer
+from cldb.enhanced_safety import SafetyLayer
 
 @pytest.fixture
 def repo():

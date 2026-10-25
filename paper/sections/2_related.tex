@@ -1,0 +1,64 @@
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Classical index advisors.}
+Index selection as an optimization problem dates to the AutoAdmin project
+\citep{chaudhuri1997autoadmin}, which searches over candidate index
+configurations using a what-if optimizer. The DB2 Advisor
+\citep{valentin2000db2advisor} and the DB2 Design Advisor
+\citep{zilio2004db2design} extended this to multiple design structures and budget
+constraints. These systems assume a fixed workload, solve an offline
+optimization problem, and are re-run manually when the workload changes.
+
+\paragraph{Learned database components.}
+Machine learning now pervades the database internals. Learned index structures
+\citep{kraska2018case} replace B-trees with models; learned cardinality
+estimators \citep{kipf2019learnedcardinalities} and learned cost models
+\citep{marcus2019learnedcost} improve plan costing; and Bao \citep{marcus2021bao}
+learns to steer the query optimizer at plan time. Each of these components is
+trained offline on a corpus and then frozen; none addresses the question of how a
+\emph{deployed} model should keep learning as the workload evolves.
+
+\paragraph{Reinforcement learning for physical design.}
+A growing body of work casts physical design as an RL problem. In the bandit
+setting, an agent chooses configuration actions (create/drop an index,
+materialize a view) and receives a latency-based reward. Such approaches are
+attractive because they avoid an explicit what-if oracle, but they inherit the
+stationarity assumption: the agent is trained and evaluated on a fixed workload
+distribution, and a distribution shift degrades performance. To the best of our
+knowledge, CLDB is the first to treat index selection as a \emph{continual} RL
+problem and to combine continual-learning machinery with an index-aware RL
+formulation.
+
+\paragraph{Continual learning.}
+Continual learning (CL) seeks to learn a sequence of tasks without forgetting.
+Regularization methods constrain updates to protect parameters important for
+previous tasks; elastic weight consolidation (EWC) \citep{kirkpatrick2017ewc}
+does so using the Fisher information matrix, while learning-without-forgetting
+\citep{li2017lwf} distils the old model's outputs. Rehearsal methods store and
+replay a subset of past data, either uniformly \citep{rolnick2019replay} or
+through gradient episodic memory \citep{lopezpaz2017gem}, which projects
+gradients to avoid increasing the loss on buffered examples. The last two
+references also define the ACC/BWT/FWT metrics we adopt. Our contribution is not
+a new CL algorithm but the \emph{combination} of these ideas with a
+database-specific priority signal and a drift-triggered consolidation rule taken
+from the concept-drift literature \citep{gama2014drift}.
+
+\paragraph{Continual and non-stationary RL.}
+Reinforcement learning under non-stationarity is surveyed by
+\citet{khetarpal2022continual}. Deep RL relies on experience replay and target
+networks \citep{mnih2015dqn,lillicrap2016ddpg}; prioritized replay
+\citep{schaul2016prioritized} reweights transitions by TD error with importance
+sampling; double Q-learning \citep{vanhasselt2016double} reduces overestimation.
+Applying these ideas to a stream of \emph{conflicting} tasks is exactly the
+continual-RL setting, and EWC was originally demonstrated on sequential Atari
+games \citep{kirkpatrick2017ewc}. CLDB instantiates that setting for index
+selection.
+
+\paragraph{Gap.}
+Existing index advisors are stationary; existing learned-DB components are frozen
+after training; and existing continual-learning methods are demonstrated on
+generic benchmarks rather than database tuning. CLDB sits at the intersection of
+the three: a \emph{continual}, \emph{index-aware}, \emph{safety-constrained}
+reinforcement-learning advisor, evaluated with continual-learning metrics on a
+reproducible workload-drift benchmark.

@@ -53,6 +53,11 @@ class CircuitBreaker:
     def record_success(self):
         with self._lock:
             self._success_count += 1
+            self._failure_count = 0
+            # A success while open starts the half-open recovery probe.
+            if self._state == CircuitState.OPEN:
+                self._state = CircuitState.HALF_OPEN
+                self._half_open_calls = 0
             if self._state == CircuitState.HALF_OPEN:
                 self._half_open_calls += 1
                 if self._half_open_calls >= self.half_open_max_calls:

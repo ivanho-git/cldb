@@ -96,6 +96,17 @@ class EWC:
         criterion = nn.CrossEntropyLoss()
         self.fisher_matrices[phase_id] = self.compute_fisher_matrix(dataloader, criterion)
         
+    def register_phase_matrix(self, phase_id: str,
+                              fisher: Dict[str, torch.Tensor],
+                              optimal_weights: Dict[str, torch.Tensor]):
+        """Register a phase from an externally computed Fisher matrix and weight
+        snapshot. Used by value-based agents (e.g. DQN), where the Fisher is
+        estimated from the squared gradients of the Q-values rather than the
+        classification NLL used by ``register_workload_phase``.
+        """
+        self.fisher_matrices[phase_id] = fisher
+        self.optimal_weights[phase_id] = optimal_weights
+
     def compute_ewc_loss(self) -> torch.Tensor:
         """
         Computes the EWC penalty loss to be added to the standard task loss.

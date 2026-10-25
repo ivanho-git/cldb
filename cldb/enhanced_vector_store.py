@@ -10,21 +10,9 @@ import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, Filter, FieldCondition, MatchValue
 
-from cldb.config import get_config
+from cldb.config import VectorStoreConfig, get_config
 from cldb.logger import get_logger
 from cldb.resilience import retry_with_backoff, get_vector_store_breaker
-
-
-class VectorStoreConfig:
-    def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "cldb_queries",
-                 vector_size: int = 384, distance_metric: str = "Cosine", timeout: int = 10, retry_attempts: int = 3):
-        self.host = host
-        self.port = port
-        self.collection_name = collection_name
-        self.vector_size = vector_size
-        self.distance_metric = distance_metric
-        self.timeout = timeout
-        self.retry_attempts = retry_attempts
 
 
 class EnhancedVectorStore:

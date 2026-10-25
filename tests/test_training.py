@@ -43,18 +43,22 @@ def test_normalizer_save_load(tmp_path):
 
 def test_early_stopping_min_mode():
     stopper = EarlyStopping(patience=3, mode="min")
-    
-    assert stopper(10.0) == False
-    assert stopper(9.0) == False
-    assert stopper(9.5) == True  # 9.5 > 9 - min_delta
+
+    assert stopper(10.0) == False  # first score becomes the baseline
+    assert stopper(9.0) == False   # improvement resets the patience counter
+    assert stopper(9.5) == False   # no improvement (1)
+    assert stopper(9.6) == False   # no improvement (2)
+    assert stopper(9.7) == True    # patience (3) exhausted
 
 
 def test_early_stopping_max_mode():
     stopper = EarlyStopping(patience=3, mode="max")
-    
+
     assert stopper(0.5) == False
-    assert stopper(0.8) == False
-    assert stopper(0.75) == True  # 0.75 < 0.8 + min_delta
+    assert stopper(0.8) == False   # improvement
+    assert stopper(0.75) == False  # no improvement (1)
+    assert stopper(0.74) == False  # no improvement (2)
+    assert stopper(0.73) == True   # patience (3) exhausted
 
 
 def test_checkpoints_manager_save_load(tmp_path):

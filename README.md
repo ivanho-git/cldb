@@ -2,7 +2,9 @@
 
 **Industrial-grade machine learning system for automatic database index optimization.**
 
-CLDB observes incoming SQL queries over time, extracts structural features, computes semantic embeddings, and uses a PyTorch policy network to decide whether to **CREATE** or **DROP** indexes. To prevent catastrophic forgetting when workloads shift, CLDB integrates Elastic Weight Consolidation (EWC) and a replay buffer using `avalanche-lib`.
+CLDB observes incoming SQL queries over time, extracts structural features, computes semantic embeddings, and uses a **deep Q-network (DQN) reinforcement-learning agent** to decide whether to **KEEP**, **CREATE**, or **DROP** indexes. The agent is trained from the latency/plan-cost reward it observes by executing queries, and to prevent catastrophic forgetting when workloads drift it combines **drift-triggered Elastic Weight Consolidation (EWC)** with a **database-aware prioritized replay buffer**. Both are implemented natively in PyTorch.
+
+Its distinguishing mechanism is **Counterfactual What-If Learning (CWIL)**: at every decision a what-if oracle evaluates *all* structurally valid actions from an identical state, and the agent is trained to rank those actions by their observed outcomes. Replay learns from the action that was taken; CWIL learns from the actions that were not.
 
 ## Features
 
@@ -12,10 +14,18 @@ CLDB observes incoming SQL queries over time, extracts structural features, comp
 - **Configuration Management**: Environment variable support, validation, multi-environment configs
 - **Model Training**: Checkpointing, early stopping, LR scheduling, MLflow integration
 
+### Reinforcement Learning
+- **Off-policy DQN**: Q-network with a frozen target network and Huber TD loss
+- **State**: query features (74) + semantic embedding (384) + workload context (3) + index-configuration state (3)
+- **Actions**: `KEEP` / `CREATE_INDEX` / `DROP_INDEX`, with structural action masking (no `CREATE` without predicate columns, no `DROP` without an index)
+- **Reward**: latency improvement minus build/resource/regression penalties (`RewardCalculator`)
+- **Exploration**: decaying epsilon-greedy; greedy at evaluation time
+- **CWIL**: a non-mutating what-if oracle (`IndexAdvisorEnv.what_if`, `cldb.counterfactual`) rolls out every valid action from one snapshot; `DQNAgent.train_counterfactual` applies a pairwise preference loss so the best what-if action out-scores every strictly worse one. This teaches the cost of a harmful index without paying for it, which is exactly what replay-only agents fail to learn on conflicting workload phases.
+
 ### Continual Learning
-- **Elastic Weight Consolidation (EWC)**: Prevents catastrophic forgetting
-- **Experience Replay**: Stores and replays important samples
-- **Multiple Architectures**: Standard, Residual, and Attention-based policy networks
+- **Drift-triggered EWC**: consolidates the policy only when workload drift is detected, not on fixed boundaries
+- **Database-aware prioritized replay**: samples by latency impact x workload rarity and refines priorities with TD errors
+- **Multiple Architectures**: standard, residual, and attention-based networks for supervised warm-starting
 - **Vector Similarity Search**: Qdrant-powered semantic query matching
 
 ### Safety & Reliability
@@ -109,29 +119,69 @@ pytest --cov=cldb tests/
 # Start dashboard
 streamlit run dashboard/app.py
 
-# Run experiments
+# Run the continual-RL benchmark (baselines + ablations + CL metrics)
+python experiments/run_rl_evaluation.py
+
+# Isolate CWIL on the conflict phases (replay-only vs replay+CWIL)
+python experiments/run_cwil_ablation.py
+
+# Run the supervised catastrophic-forgetting study
 python experiments/run_evaluation.py
 ```
+
+The RL benchmark is configurable via environment variables (`CLDB_SEEDS`,
+`CLDB_EPISODES`, `CLDB_HORIZON`, `CLDB_BUDGET`, `CLDB_CF_WEIGHT`,
+`CLDB_AGENTS`) and reports ACC, BWT, FWT, average forgetting, and a
+**conflict-phase reward** for the DQN agent, EWC/replay ablations, and static
+baselines. Results are exported to `experiments/results/cl_results.json`; the
+dashboard reads that file directly.
+
+CWIL is an opt-in ablation: the silent-drift experiment is
+`experiments/run_cwil_ablation.py`, and it can also be added to the continual
+benchmark with `CLDB_AGENTS=CWIL`. On the full sequence it did not improve the
+headline agent, so it is not presented as doing so; it is a targeted mechanism
+for adaptation before the drift detector assigns a new phase.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        CLDB Pipeline                             │
-├─────────────────────────────────────────────────────────────────┤
-│  Query → Parser → Feature Encoder → Embedder → CL Engine        │
-│              ↓              ↓              ↓                    │
-│         SQL Features    Vector DB     Policy Network            │
-│              ↓              ↓              ↓                    │
-│         Decision Engine  Similarity   Action + Confidence        │
-│              ↓                                 ↓                 │
-│         Safety Layer ←────── Validation ←────────────────        │
-│              ↓                                                 │
-│         Executor → Database (CREATE/DROP INDEX)                 │
-│              ↓                                                 │
-│         Feedback → Vector Store + Replay Buffer                 │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          CLDB Pipeline                               │
+├──────────────────────────────────────────────────────────────────────┤
+│  Query → Parser → Feature Encoder → Embedder → RL Agent (DQN)        │
+│              ↓              ↓              ↓                         │
+│         SQL Features    Vector DB     Q-Network + EWC                │
+│              ↓              ↓              ↓                         │
+│         Decision Engine  Similarity   Action + Confidence            │
+│              ↓                                 ↓                     │
+│         Safety Layer ←────── Validation ←────────────────            │
+│              ↓                                 ↓                     │
+│         Executor → Database (CREATE/DROP INDEX)                      │
+│              ↓                                 ↓                     │
+│         Feedback → Vector Store + Replay Buffer → Background DQN     │
+│                                                       ↑              │
+│              What-if oracle → all-action TD (CWIL) ───┘              │
+└──────────────────────────────────────────────────────────────────────┘
 ```
+
+## Project layout
+
+There is exactly one pipeline (`CLDBPipeline`; `ProductionPipeline` is an alias)
+and one implementation of each subsystem. The former `cl_engine`, `vector_store`,
+`safety_layer`, and `production_pipeline` re-export modules were removed.
+
+| Module | Responsibility |
+|--------|----------------|
+| `cldb/pipeline.py` | The online pipeline: decide, validate, execute, measure, learn |
+| `cldb/rl_agent.py` | DQN, replay updates, EWC consolidation, CWIL update |
+| `cldb/counterfactual.py` | What-if oracle protocol and counterfactual batching |
+| `cldb/sim_env.py` | Reproducible cost-model MDP, non-mutating `what_if()` |
+| `cldb/replay_buffer.py` | Database-aware prioritized replay |
+| `cldb/ewc.py` | Native Elastic Weight Consolidation |
+| `cldb/enhanced_cl_engine.py` | Supervised warm-start networks |
+| `cldb/drift_detection.py` | Embedding-space workload drift detector |
+| `cldb/enhanced_safety.py` | Confidence, index limits, rollback, audit |
+| `cldb/enhanced_vector_store.py` | Qdrant store with in-memory fallback |
 
 ## Monitoring
 

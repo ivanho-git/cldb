@@ -1,0 +1,127 @@
+\section{Introduction}
+
+Modern database management systems are increasingly \emph{self-driving}: they
+observe their own workload and act on it without human intervention
+\citep{pavlo2017selfdriving}. Physical design---in particular, choosing which
+secondary indexes to create and drop---is one of the highest-leverage knobs in
+such a system, because indexes can change query latency by orders of magnitude.
+Classical index advisors formulate this as a what-if optimization problem over a
+fixed, known workload and solve it with greedy search or integer programming
+\citep{chaudhuri1997autoadmin,valentin2000db2advisor,zilio2004db2design}. These
+advisors are \emph{offline} and \emph{assume a stationary workload}: the workload
+is collected, the advisor is run, indexes are materialized, and the loop stops.
+
+Recent work replaces the hand-designed search with learned models, including
+learned cost estimators \citep{marcus2019learnedcost}, learned cardinality
+estimators \citep{kipf2019learnedcardinalities}, learned index structures
+\citep{kraska2018case}, and learned query optimizers such as Bao
+\citep{marcus2021bao}. A parallel line applies reinforcement learning (RL) to
+physical design, training an agent to propose index actions and rewarding it with
+observed latency improvements. All of these systems share the same hidden
+assumption as their classical predecessors: \emph{the workload used to train the
+model is the workload that will be served at deployment time.}
+
+Production workloads violate this assumption. A transactional system looks very
+different at 9~a.m.\ (short, selective, point lookups on the \texttt{orders}
+table) than at 2~a.m.\ (long analytical scans over the same table); retail
+systems shift with campaigns and seasons; and schemas and access patterns evolve
+over months. We call such a temporally evolving workload a \emph{workload drift},
+and the periods over which the workload distribution is approximately stationary
+\emph{workload phases}. When the workload drifts, a deployed advisor faces a
+dilemma:
+\begin{enumerate}
+  \item \textbf{Offline retraining} from scratch on the new workload is
+    expensive, requires collecting and labelling a batch of queries, and
+    disrupts the service; it also discards knowledge of previous phases that may
+    return.
+  \item \textbf{Online fine-tuning} on recent queries is cheap and
+    non-disruptive, but naively updating the parameters on the new phase causes
+    \emph{catastrophic forgetting} \citep{mccloskey1989catastrophic}: the agent
+    rapidly loses the ability to optimize the phases it previously mastered,
+    which is exactly the situation when the workload later returns to a previous
+    phase.
+\end{enumerate}
+This is the continual-learning trilemma---\emph{adapt}, \emph{retain}, and
+\emph{stay cheap/online}---and existing index advisors address at most two of the
+three.
+
+\paragraph{Approach.}
+We argue that autonomous index selection should be posed not as a single-task RL
+problem but as a \emph{continual reinforcement-learning} problem
+\citep{khetarpal2022continual}. We therefore introduce \textbf{CLDB}, an online
+index-selection agent that learns an unbounded sequence of non-stationary
+workload phases from live query feedback. CLDB makes four design contributions,
+all of which are implemented end-to-end:
+\begin{itemize}
+  \item \textbf{Index-aware off-policy DQN.} The agent is a deep Q-network
+    \citep{mnih2015dqn} with a target network. Crucially, the state includes the
+    \emph{current index configuration} (number of active indexes, whether the
+    current predicate is covered, and remaining budget), making the process a
+    genuine Markov decision process rather than a contextual bandit: creating an
+    index has a one-time cost and a recurring benefit, and dropping it is a
+    decision that depends on the accumulated index state.
+  \item \textbf{Drift-triggered EWC.} Instead of consolidating at fixed task
+    boundaries (which are unknown online), CLDB computes the elastic weight
+    consolidation penalty \citep{kirkpatrick2017ewc} only when a drift detector
+    \citep{gama2014drift} fires. We analyze the cost of this event-driven rule
+    relative to boundary-based consolidation (Lemma~\ref{lem:consolidation}).
+  \item \textbf{Database-aware prioritized replay.} The replay buffer
+    prioritizes experiences by their \emph{database impact}---absolute latency
+    reward times workload rarity---and refines those priorities with absolute TD
+    errors, combining the anti-forgetting effect of experience replay
+    \citep{rolnick2019replay} with the sample efficiency of prioritized replay
+    \citep{schaul2016prioritized}.
+  \item \textbf{Safety-constrained exploration.} A structural action mask forbids
+    \texttt{CREATE\_INDEX} without predicate columns and \texttt{DROP\_INDEX}
+    without an existing index, so exploration can never propose an unsafe schema
+    change.
+\end{itemize}
+
+\paragraph{Research questions.}
+CLDB is designed to answer the following question and its refinements:
+\begin{quote}
+\emph{Can a reinforcement-learning index-selection policy continually acquire new
+workload phases from live query feedback---while retaining competence on
+previously seen phases---without offline retraining or blocking query
+execution?}
+\end{quote}
+Concretely we ask: \textbf{(RQ1)} does the agent retain earlier phases better
+than naive online fine-tuning? \textbf{(RQ2)} which mechanism drives retention,
+replay or EWC? \textbf{(RQ3)} does database-aware prioritization beat uniform
+replay? \textbf{(RQ4)} does action masking help or hurt? \textbf{(RQ5)} can
+adaptation happen online at bounded cost?
+
+\paragraph{Contributions.}
+\begin{enumerate}
+  \item We give the first formulation of index selection as a continual
+    reinforcement-learning problem with an index-aware state, and we provide a
+    reproducible \emph{cost-model benchmark} of conflicting workload phases that
+    induces genuine catastrophic forgetting (Section~\ref{sec:problem},
+    Section~\ref{sec:experiments}).
+  \item We design and implement a complete agent---drift-triggered EWC,
+    database-aware prioritized replay, and safety masking---together with an
+    online pipeline that satisfies the non-blocking requirement
+    (Section~\ref{sec:method}).
+  \item We provide a theoretical analysis: the EWC objective as a Laplace
+    posterior approximation (Proposition~\ref{prop:ewc}), the value-network
+    Fisher estimator (Proposition~\ref{prop:fisher}), the unbiasedness of the
+    prioritized-replay gradient (Proposition~\ref{prop:per}), and the
+    consolidation-cost advantage of drift triggering
+    (Lemma~\ref{lem:consolidation}) (Section~\ref{sec:theory}).
+  \item We evaluate against static, random and heuristic baselines and against
+    ablations (no EWC, no replay) using the standard continual-learning metrics
+    ACC, BWT, FWT and forgetting \citep{lopezpaz2017gem}, with eight seeds and
+    paired significance tests (Section~\ref{sec:results}). The central,
+    statistically significant finding is that \emph{rehearsal} (replay) is the
+    ingredient that prevents catastrophic forgetting; EWC's incremental benefit is
+    smaller and, in this benchmark, not significant---a result we report and
+    analyze rather than hide.
+\end{enumerate}
+
+\paragraph{Organization.}
+Section~\ref{sec:related} reviews related work. Section~\ref{sec:problem} gives
+the mathematical formulation. Section~\ref{sec:method} describes CLDB.
+Section~\ref{sec:theory} develops the theory. Sections~\ref{sec:experiments}
+and~\ref{sec:results} present the setup and results.
+Section~\ref{sec:discussion} discusses limitations and threats to validity, and
+Section~\ref{sec:conclusion} concludes.

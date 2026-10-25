@@ -1,0 +1,100 @@
+\section{Experimental Setup}
+\label{sec:experiments}
+
+\subsection{Reproducible workload-drift benchmark}
+To study continual index selection without depending on a particular DBMS build,
+we use a \emph{cost-model} environment that is deterministic and fast while
+retaining the structure of the real problem: a query stream organized into
+workload phases, an index budget, per-column selectivity, and a reward defined as
+the negative operating cost \eqref{eq:reward}. The environment implements the MDP
+of Section~\ref{sec:problem} with the two-value latency model
+\eqref{eq:latency}; in a production deployment, \(L(q,I)\) is replaced by a
+measured latency or plan cost, and no other component changes.
+
+\paragraph{Conflicting phases.}
+The distinguishing feature of the benchmark is that phases \emph{conflict}: the
+same query templates appear in several phases with \emph{opposite} optimal
+actions, because a predicate that is highly selective in one phase is
+non-selective in another. For example, \texttt{WHERE category=...} is worth
+indexing in phase~1 and worth \emph{not} indexing in phase~2. The two phases are
+therefore observationally near-identical except for the workload-context signal,
+which makes the sequence strongly forgetting-prone---a database analogue of the
+permuted-task benchmarks used in continual learning. Table~\ref{tab:phases}
+lists the phases; a $\star$ marks a phase whose optimal actions conflict with its
+partner.
+
+\begin{table}[t]\centering\small
+\caption{Workload phases. Phases $2,4,5$ share queries with phases $1,3,0$
+respectively but invert the selectivity of the predicate columns, so the optimal
+action for an identical observation flips.}
+\label{tab:phases}
+\begin{tabular}{cll}
+\toprule
+\# & Pattern & Selective columns \\
+\midrule
+0 & OLTP point lookups & \texttt{customer\_id}, \texttt{product\_id} \\
+1 & Attribute filters & \texttt{category}, \texttt{status} \\
+2$^\star$ & Filters (conflict) & none (inverse of \#1) \\
+3 & Analytical scans & \texttt{order\_date}, \texttt{region} \\
+4$^\star$ & Analytical (conflict) & none (inverse of \#3) \\
+5$^\star$ & OLTP (conflict) & none (inverse of \#0) \\
+6 & Return to \#0 & \texttt{customer\_id}, \texttt{product\_id} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Agents, baselines and ablations}
+We compare three learning agents and three non-learning baselines.
+\begin{itemize}
+  \item \textbf{CLDB-RL} (ours): DQN $+$ drift-triggered EWC $+$
+    database-aware prioritized replay $+$ action masking.
+  \item \textbf{RL (no EWC)}: identical but $\lambda=0$; isolates the EWC effect.
+  \item \textbf{RL (online, no replay)}: a replay buffer of capacity 64, i.e.\
+    near-online fine-tuning; isolates the replay effect and serves as the
+    catastrophic-forgetting control.
+  \item \textbf{KEEP}, \textbf{RANDOM}, \textbf{GREEDY-CREATE}: static
+    non-learning policies.
+\end{itemize}
+
+\subsection{Protocol}
+For each seed we stream the seven phases in order. Within each phase the agent
+acts \(\epsilon\)-greedily (masked), writing transitions to the buffer and
+performing a DQN update every other step; the drift detector runs on the query
+embeddings and triggers EWC consolidation when it fires. After each phase we
+evaluate the greedy policy on every phase seen so far, filling one row of the
+matrix \(\R\). Seeds are fixed 0--7 for reproducibility; we report the mean and
+standard deviation over seeds and paired $t$-tests between the full model and
+its ablations. All runs are single-threaded on a CPU.
+
+\subsection{Hyperparameters}
+Table~\ref{tab:hyper} lists the configuration. The embedding is produced offline
+(the encoder is frozen); only the DQN is trained.
+
+\begin{table}[t]\centering\small
+\caption{Hyperparameters.}
+\label{tab:hyper}
+\begin{tabular}{ll}
+\toprule
+Component & Value \\
+\midrule
+State dim. & $74+384+3+3=464$ \\
+Q-network & MLP $464\!\to\!128\!\to\!64\!\to\!3$, ReLU \\
+Optimizer & Adam, lr $5\!\times\!10^{-4}$ \\
+Discount $\gamma$ & $0.97$ \\
+Batch size & $64$ \\
+Target update & every $150$ grad.\ steps \\
+$\epsilon$ schedule & $1.0\to0.05$ over $2500$ steps \\
+Grad.\ clip & $10$ \\
+Replay capacity & $20000$ (online variant: $64$) \\
+Replay $\alpha,\beta$ & $0.6,\ 0.4$ \\
+EWC $\lambda$ & $0.4$ \\
+Index budget $B$ & $2$ \\
+Build cost $\kappa$ & $0.5$ \\
+Resource cost $\rho$ & $0.2$ \\
+Latency $\ell_{\text{low}},\ell_{\text{high}}$ & $0.1,\ 1.0$ \\
+Horizon (steps/phase) & $36$ \\
+Episodes per phase & $12$ \\
+Seeds & $8$ \\
+\bottomrule
+\end{tabular}
+\end{table}

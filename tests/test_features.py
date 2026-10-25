@@ -36,7 +36,13 @@ def test_feature_encoder_tables_bow():
     )
     vec = encoder.encode(features)
     assert vec.shape[0] == 74
-    assert sum(vec[4 : 4 + encoder.max_tables]) == 2.0
+    # Feature hashing can map distinct tables into the same bucket, so assert
+    # the encoding energy equals the number of distinct buckets actually used.
+    distinct_buckets = {
+        encoder._hash_bucket("users", encoder.max_tables),
+        encoder._hash_bucket("orders", encoder.max_tables),
+    }
+    assert sum(vec[4 : 4 + encoder.max_tables]) == float(len(distinct_buckets))
 
 
 def test_feature_encoder_columns_bow():

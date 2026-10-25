@@ -12,7 +12,7 @@ import threading
 import time
 
 from sqlalchemy import text
-from cldb.metadata_repo import MetadataRepo, DBIndex, IndexColumn, OptimizationHistory
+from cldb.metadata_repo import MetadataRepo, DBTable, DBIndex, IndexColumn, OptimizationHistory
 from cldb.logger import get_logger
 from cldb.resilience import RateLimiter
 
@@ -43,44 +43,40 @@ class EnhancedSafetyLayer:
         self._audit_log: List[Dict] = []
     
     def evaluate_decision(self, decision: Dict, sample_query: str) -> bool:
-        if decision["confidence"] < self.confidence_threshold:
-            self._audit("rejected", decision, "low_confidence", f"Confidence {decision['confidence']} below threshold {self.confidence_threshold}")
-            return False
-        
-        if decision["action"] == "KEEP":
+        # A "KEEP" decision makes no schema change and is always safe.
+        if decision.get("action") == "KEEP":
             return True
-        
-        if not self._check_index_limit(decision["table_name"]):
-            self._audit("rejected", decision, "index_limit", f"Too many indexes on {decision['table_name']}")
+
+        confidence = decision.get("confidence", 0.0)
+        if confidence < self.confidence_threshold:
+            self._audit("rejected", decision, "low_confidence", f"Confidence {confidence} below threshold {self.confidence_threshold}")
             return False
-        
+
+        table_name = decision.get("table_name")
+        if not self._check_index_limit(table_name):
+            self._audit("rejected", decision, "index_limit", f"Too many indexes on {table_name}")
+            return False
+
         cost_before = self._get_explain_cost(sample_query)
         decision["estimated_cost_before"] = cost_before
-        
+
         return True
-    
+
     def _check_index_limit(self, table_name: str) -> bool:
         if not table_name or table_name == "unknown":
             return True
-        
+
         with self.repo.get_session() as session:
-            active_indexes = session.query(DBIndex).join(
-                IndexColumn, IndexColumn.index_id == DBIndex.index_id
-            ).filter(
+            table = session.query(DBTable).filter(DBTable.table_name == table_name).first()
+            if table is None:
+                return True
+
+            active_indexes = session.query(DBIndex).filter(
+                DBIndex.table_id == table.table_id,
                 DBIndex.is_active == True,
-                IndexColumn.column_id.in_(
-                    session.query(IndexColumn.column_id).join(
-                        DBIndex, DBIndex.index_id == IndexColumn.index_id
-                    ).filter(DBIndex.is_active == True)
-                )
-            ).all()
-            
-            table_indexes = [idx for idx in active_indexes if idx.table_id]
-            
-            if len(table_indexes) >= self.max_indexes_per_table:
-                return False
-        
-        return True
+            ).count()
+
+        return active_indexes < self.max_indexes_per_table
     
     def _get_explain_cost(self, query: str) -> float:
         try:
@@ -168,16 +164,24 @@ class EnhancedSafetyLayer:
             "confidence": decision.get("confidence", 0)
         }
         self._audit_log.append(audit_entry)
-        
-        with self.repo.get_session() as session:
-            history = OptimizationHistory(
-                decision_id=0,
-                table_id=0,
-                action=decision.get("action", "UNKNOWN"),
-                status=event_type.upper()
-            )
-            session.add(history)
-            session.commit()
+
+        # Only persist a durable history row when the decision references a
+        # real decision row; otherwise keep the in-memory audit trail only.
+        decision_id = decision.get("decision_id")
+        table_id = decision.get("table_id")
+        if decision_id and table_id:
+            try:
+                with self.repo.get_session() as session:
+                    history = OptimizationHistory(
+                        decision_id=decision_id,
+                        table_id=table_id,
+                        action=decision.get("action", "UNKNOWN"),
+                        status=event_type.upper()
+                    )
+                    session.add(history)
+                    session.commit()
+            except Exception as e:
+                self.logger.warning(f"Failed to persist audit history: {e}")
     
     def get_active_operations(self) -> List[Dict]:
         with self._operation_lock:

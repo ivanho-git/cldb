@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 
-from cldb.cl_engine import EMBEDDING_DIM, CONTEXT_DIM
+from cldb.enhanced_cl_engine import EMBEDDING_DIM, CONTEXT_DIM
 
 
 class BaselinePeriodic:

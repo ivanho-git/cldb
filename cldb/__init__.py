@@ -10,8 +10,7 @@ from cldb.executor import Executor
 from cldb.performance_collector import PerformanceCollector
 from cldb.enhanced_vector_store import VectorStore, EnhancedVectorStore
 from cldb.metadata_repo import MetadataRepo
-from cldb.pipeline import CLDBPipeline
-from cldb.production_pipeline import ProductionPipeline
+from cldb.pipeline import CLDBPipeline, ProductionPipeline
 from cldb.server import CLDBServer, CLDBRequestHandler
 from cldb.config import get_config, Config, DatabaseConfig, VectorStoreConfig, MLConfig, EWCConfig, ReplayConfig, SafetyConfig, EmbeddingConfig, ObservabilityConfig, ServerConfig
 from cldb.logger import get_logger, CLDBLogger, RequestContext, log_execution_time

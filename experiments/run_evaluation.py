@@ -11,9 +11,14 @@ Scenarios evaluated:
 4. Returning to a previously seen workload (Catastrophic Forgetting test)
 """
 import os
+import sys
+
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+
+# Allow running this script directly (python experiments/run_evaluation.py)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from cldb.parser import SQLParser
 from cldb.features import FeatureEncoder
@@ -21,6 +26,10 @@ from cldb.embeddings import QueryEmbedder
 from cldb.enhanced_cl_engine import CLEngine, EMBEDDING_DIM, CONTEXT_DIM
 from cldb.replay_buffer import DatabaseAwarePriorityReplay
 from cldb.config import get_config
+
+# Number of gradient epochs applied per workload phase. A single step is not
+# enough for the policy network to converge on a phase.
+TRAIN_EPOCHS = int(os.environ.get("CLDB_EVAL_EPOCHS", "15"))
 
 # 1. Stable Workload (OLTP)
 PHASE_1_QUERIES = [
@@ -55,10 +64,16 @@ PHASE_3_LABELS = [1, 1, 2] * 6
 PHASE_4_LABELS = PHASE_1_LABELS.copy()
 
 
+# Shared, stateless encoders (constructed once).
+_PARSER = SQLParser()
+_ENCODER = FeatureEncoder()
+_EMBEDDER = QueryEmbedder()
+
+
 def prepare_phase_data(queries, labels):
-    parser = SQLParser()
-    encoder = FeatureEncoder()
-    embedder = QueryEmbedder()
+    parser = _PARSER
+    encoder = _ENCODER
+    embedder = _EMBEDDER
 
     x_features_list = []
     x_emb_list = []
@@ -139,32 +154,39 @@ def run():
     }
 
     p1_feat, p1_emb, p1_ctx, p1_y = prepare_phase_data(PHASE_1_QUERIES, PHASE_1_LABELS)
+    prev_phase_data = None
 
     for idx, (queries, labels, name) in enumerate(phases):
         print(f"\n--- {name} ---")
 
         x_feat, x_emb, x_ctx, y = prepare_phase_data(queries, labels)
-        
-        # Train No Replay (just current batch)
-        cldb_no_replay.train_on_batch(x_feat, x_emb, x_ctx, y)
-        
+
+        # Train No Replay (current phase only)
+        for _ in range(TRAIN_EPOCHS):
+            cldb_no_replay.train_on_batch(x_feat, x_emb, x_ctx, y)
+
         # Train +Replay
         for i in range(len(y)):
             replay_buffer.add(f"q_{idx}_{i}", x_feat[i].numpy(), x_emb[i].numpy(), x_ctx[i].numpy(), y[i].item(), 1.0)
-        # We manually disable EWC penalty for this variant by setting lambda to 0
+        # EWC is irrelevant here because this engine never registers a phase;
+        # keep the penalty off explicitly so the variant isolates replay.
         original_lambda = cldb_replay.ewc.lambda_param
         cldb_replay.ewc.lambda_param = 0.0
-        cldb_replay.train_on_experience(replay_buffer, batch_size=len(y))
+        for _ in range(TRAIN_EPOCHS):
+            cldb_replay.train_on_experience(replay_buffer, batch_size=min(len(y), len(replay_buffer)))
         cldb_replay.ewc.lambda_param = original_lambda
-        
-        # Train +Replay+EWC
-        # Register new workload phase in EWC before training
-        if idx > 0:
-            cldb_full.ewc.register_workload_phase(f"phase_{idx-1}", p1_feat, p1_emb, p1_ctx, p1_y)
-            
+
+        # Train +Replay+EWC: consolidate the PREVIOUS phase before learning the new one.
+        if prev_phase_data is not None:
+            pf, pe, pc, py = prev_phase_data
+            cldb_full.ewc.register_workload_phase(f"phase_{idx}", pf, pe, pc, py)
+
         for i in range(len(y)):
             full_replay_buffer.add(f"q_{idx}_{i}", x_feat[i].numpy(), x_emb[i].numpy(), x_ctx[i].numpy(), y[i].item(), 1.0)
-        cldb_full.train_on_experience(full_replay_buffer, batch_size=len(y))
+        for _ in range(TRAIN_EPOCHS):
+            cldb_full.train_on_experience(full_replay_buffer, batch_size=min(len(y), len(full_replay_buffer)))
+
+        prev_phase_data = (x_feat, x_emb, x_ctx, y)
 
         # Evaluate current phase accuracy
         results["Postgres Default"].append(evaluate_model(postgres_baseline, x_feat, x_emb, x_ctx, y))

@@ -1,4 +1,4 @@
-from cldb.server import serve
+from cldb.webapp import main
 
 if __name__ == "__main__":
-    serve()
+    main()

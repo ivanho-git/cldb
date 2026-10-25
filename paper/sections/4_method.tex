@@ -1,0 +1,162 @@
+\section{The CLDB System}
+\label{sec:method}
+
+\subsection{Overview}
+CLDB is an online index-selection agent. Queries arrive continuously; each query
+is parsed and encoded, the agent selects an action under a safety mask, the
+action is validated and executed, the resulting latency is measured, and the
+transition is written to a prioritized replay buffer. A background scheduler
+performs gradient updates, and a drift detector triggers elastic weight
+consolidation when the workload changes. Figure~\ref{fig:arch} summarizes the
+pipeline. The design goal is that the \emph{critical path} (inference and
+execution) never blocks on learning.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  font=\footnotesize, node distance=6mm and 7mm,
+  box/.style={draw, rounded corners, align=center, inner sep=4pt, minimum height=7mm},
+  arr/.style={-{Latex[length=2mm]}, thick}, bg/.style={draw, dashed, rounded corners, inner sep=6pt}
+]
+\node[box] (q) {Query $q_t$};
+\node[box, right=of q] (p) {Parser\\[-2pt]\& Features};
+\node[box, right=of p] (e) {Embedder};
+\node[box, right=of e] (st) {State $s_t$};
+\node[box, below=of st] (agent) {DQN\\[-2pt]$\pi_\theta$ (+ mask)};
+\node[box, left=of agent] (safe) {Safety\\[-2pt]check};
+\node[box, left=of safe] (exec) {Executor\\[-2pt](PG)};
+\node[box, right=of agent] (buf) {Prioritized\\[-2pt]replay $\mathcal{D}$};
+\node[box, below=of buf] (train) {Background\\[-2pt]DQN update};
+\node[box, below=of train] (ewc) {Drift-triggered\\[-2pt]EWC};
+\draw[arr] (q)--(p); \draw[arr] (p)--(e); \draw[arr] (e)--(st);
+\draw[arr] (st)--(agent); \draw[arr] (agent)--(safe);
+\draw[arr] (safe)--(exec); \draw[arr] (agent)--(buf);
+\draw[arr] (buf)--(train); \draw[arr] (train)--(ewc);
+\draw[arr, dashed] (ewc.west) -- ++(-1,0) |- (agent.south);
+\begin{scope}[on background layer]
+\node[bg, fit=(p)(e)(st)(agent)(buf)(train)(ewc), label={[font=\scriptsize\itshape]above:non-blocking learning path}] {};
+\end{scope}
+\end{tikzpicture}
+\caption{The CLDB pipeline. Inference and execution form the critical path; the
+replay buffer, background DQN updates and drift-triggered EWC run off the
+critical path.}
+\label{fig:arch}
+\end{figure}
+
+\subsection{State construction}
+The state \eqref{eq:state} combines four heterogeneous signals. The
+\emph{structural} features \(\phi(q)\) are cheap to compute and generalize across
+table names via a fixed-size hashing trick. The \emph{semantic} embedding
+\(e(q)\) is produced by a sentence encoder (with a deterministic hashing
+embedder as an offline fallback, see Section~\ref{sec:experiments}); it lets the
+agent generalize between textually similar queries. The \emph{workload context}
+\(c_t\) summarizes recent activity. The \emph{index-state} \(\iota(I_t)\)
+\eqref{eq:indexstate} closes the loop between decisions: it tells the agent
+whether the current predicate is already covered and how much budget remains, so
+that the value of \textsc{create} and \textsc{drop} can be assessed.
+
+\subsection{Learning: off-policy DQN}
+We approximate \(Q^\star\) with a network \(Q_\theta\) and a frozen target
+network \(Q_{\theta^-}\). Transitions \((s_t,a_t,r_t,s_{t+1},d_t)\) are drawn
+from the replay buffer \(\mathcal{D}\) where \(d_t\in\{0,1\}\) is the terminal
+flag. The temporal-difference target and loss are
+\begin{align}
+  y_t &= r_t + \gamma\,(1-d_t)\,\max_{a'} Q_{\theta^-}(s_{t+1},a'), \label{eq:target}\\
+  \loss_{\mathrm{DQN}}(\theta) &= \E_{(s,a,r,s',d)\sim\mathcal{D}}
+     \Big[\, w \cdot \rho_\delta\big(y - Q_\theta(s,a)\big) \Big], \label{eq:dqnloss}
+\end{align}
+where \(\rho_\delta\) is the Huber loss and \(w\) is the importance-sampling
+weight of \eqref{eq:is}. The target parameters are copied from \(\theta\)
+every \(C\) updates. Gradients are clipped to norm \(10\).
+
+\subsection{Database-aware prioritized replay}
+A uniform buffer spends most of its capacity on the (many) common queries. We
+instead prioritize experiences by their \emph{impact on the database}:
+\begin{equation}
+  p_i \propto \big(|\delta_i|+\epsilon\big)^{\alpha},
+  \qquad
+  \text{initial priority } \; \tilde p_i = \big(|r_i|+\epsilon\big)\cdot
+      \tfrac{1}{\sqrt{f(a_i)}},
+  \label{eq:priority}
+\end{equation}
+where \(\delta_i\) is the absolute TD error, \(f(a_i)\) is the running frequency
+of action \(a_i\) in the buffer (so \emph{rare} decisions, e.g.\ analytical
+\textsc{drop}s, are surfaced), and \(\epsilon\) is a small constant. Sampling uses
+probability \(p_i\); the loss is corrected by the importance-sampling weight
+\begin{equation}
+  w_i = \frac{\big(N\,p_i\big)^{-\beta}}{\max_j (N\,p_j)^{-\beta}},
+  \label{eq:is}
+\end{equation}
+with \(N=|\mathcal{D}|\). After each update, priorities are refreshed with the
+observed TD error, \(\tilde p_i \leftarrow (|\delta_i|+\epsilon)\,/\sqrt{f(a_i)}\).
+This combines the anti-forgetting effect of rehearsal with the sample efficiency
+of prioritized replay, and adds a database-specific notion of importance (latency
+impact and rarity) that generic replay lacks.
+
+\subsection{Safety-constrained exploration}
+Exploration uses \(\epsilon\)-greedy selection \emph{over the masked action set}
+\(\mu(s_t)\). The mask forbids \textsc{create} without predicate columns (an index
+on nothing is meaningless), \textsc{create} beyond the budget, and \textsc{drop}
+of a non-existent index. Because the mask is applied before both exploration and
+exploitation, the agent never proposes an infeasible or unsafe schema change,
+which also removes a large amount of uninformative exploration. A post-hoc safety
+layer additionally rejects low-confidence actions and can roll back a change whose
+measured latency regresses.
+
+\subsection{Drift-triggered elastic weight consolidation}
+When the workload shifts, the policy should adapt---but not at the cost of the
+phases already learned. EWC \citep{kirkpatrick2017ewc} adds a quadratic penalty
+anchoring parameters in proportion to their importance for previous tasks,
+\begin{equation}
+  \Omega(\theta) = \frac{\lambda}{2}\sum_i F_i\,\big(\theta_i - \theta^\star_i\big)^2,
+  \label{eq:ewc}
+\end{equation}
+where \(\theta^\star\) is the parameter snapshot at the end of the consolidated
+phase and \(F\) is the Fisher information matrix (Section~\ref{sec:theory}). The
+key design choice is \emph{when} to consolidate. Fixed task boundaries are
+unknown online; instead we consolidate only when the drift detector
+\citep{gama2014drift}, which tracks the cosine distance between the centroid of
+a sliding window of query embeddings and a baseline centroid, fires. This
+\emph{drift-triggered} rule performs consolidation \(O(m)\) times for \(m\) drift
+events rather than \(O(T)\) times for \(T\) phases, without missing a shift
+(Lemma~\ref{lem:consolidation}). Algorithm~\ref{alg:online} and
+Algorithm~\ref{alg:ewc} summarize the online loop and consolidation.
+
+\begin{algorithm}[t]
+\caption{CLDB online step (one query)}
+\label{alg:online}
+\begin{algorithmic}[1]
+\Require query $q_t$, policy $Q_\theta$, buffer $\mathcal{D}$, mask $\mu$
+\State $s_t \gets \mathrm{build\_state}(q_t,\, I_t)$ \Comment{Eq.~\eqref{eq:state}}
+\State finalize previous transition with successor $s_t$; push to $\mathcal{D}$
+\State $a_t \gets \epsilon\text{-greedy}\big(Q_\theta(s_t),\,\mu(s_t)\big)$
+\State validate $a_t$ with the safety layer; if rejected, $a_t\gets\textsc{keep}$
+\State execute $a_t$; measure latency; compute $r_t$ \Comment{Eq.~\eqref{eq:reward}}
+\State store $(s_t,a_t,r_t,s_{t+1})\to\mathcal{D}$
+\State notify drift detector with $e(q_t)$; if drift, call \textsc{Consolidate}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{Drift-triggered consolidation}
+\label{alg:ewc}
+\begin{algorithmic}[1]
+\Require current states $\mathcal{B}$, phase id $p$, policy $Q_\theta$
+\For{parameters $i$} $F_i \gets 0$ \EndFor
+\For{batch $b \subset \mathcal{B}$}
+  \State $\ell \gets \frac{1}{|b|}\sum_{s\in b}\sum_{a} Q_\theta(s,a)$
+  \State $F_i \gets F_i + (\partial_{\theta_i}\ell)^2$
+\EndFor
+\State $F_i \gets F_i / \#\text{batches}$; \;
+$\theta^\star_i \gets \theta_i$ \Comment{snapshot}
+\State register $(p, F, \theta^\star)$ for EWC penalty \eqref{eq:ewc}
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Non-blocking online operation}
+Inference is a single forward pass (milliseconds). Training runs in a background
+thread that wakes periodically and performs DQN updates from the replay buffer;
+drift detection and EWC consolidation also run off the critical path. Query
+execution therefore never blocks on learning, which is the operational
+requirement that motivated the design. The pipeline exposes structured metrics
+(replay size, TD error, EWC penalty, drift score).

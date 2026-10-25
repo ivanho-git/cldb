@@ -1,0 +1,76 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{What the results show.}
+CLDB-RL is designed so that retention and adaptation are not in conflict. The
+benchmark deliberately makes phases conflict, so a policy that simply fine-tunes
+on the most recent phase should collapse; we observe exactly that for the
+replay-free control, whose performance on earlier phases decays to the KEEP
+baseline (forgetting \(\approx 0.22\)). Restoring a replay buffer recovers
+retention almost completely, and the database-aware prioritization and EWC
+provide a further, smaller improvement. This ordering---online $\ll$ replay
+$\approx$ full---is the central empirical claim.
+
+\paragraph{Why persistence, not just replay, matters.}
+Experience replay works here because the conflicting phases share observations:
+the buffer keeps a set of examples from every phase, so gradient steps on the
+current phase are interleaved with steps that protect the past. This is the
+mechanism identified by \citet{rolnick2019replay}. EWC contributes a
+complementary, parameter-space force that is useful precisely for the phases
+whose examples are no longer in the buffer.
+
+\paragraph{The adapt/retain trade-off in practice.}
+Proposition~\ref{prop:drift} predicts that a larger \(\lambda\) reduces drift
+(and forgetting) but slows adaptation. In our runs, EWC's benefit is real but
+modest, and at short training budgets it can slightly slow re-learning of a
+returning phase. This is the expected shape of the trade-off and suggests that
+\(\lambda\) should be tuned per deployment---or made adaptive, which is a natural
+extension.
+
+\paragraph{Cost.}
+Drift-triggered consolidation incurs a Fisher computation only when the workload
+changes; the online pipeline runs all learning off the critical path, so query
+latency is unaffected by training. The dominant runtime cost of the full model
+over the ablations is the per-step evaluation of the EWC penalty, which grows
+with the number of consolidated phases; this is a known cost of regularization
+methods and can be bounded by consolidating only the most recent $k$ phases or by
+using a Kronecker-factored Fisher.
+
+\subsection{Threats to validity}
+\label{sec:threats}
+\paragraph{External validity.}
+The most important limitation is that the benchmark is a \emph{cost model}, not a
+running DBMS. The latency model \eqref{eq:latency} abstracts away plan-cost
+non-linearities, concurrency, buffer-pool effects, and the interaction of
+multiple indexes. A real evaluation on a system such as PostgreSQL with a
+standard workload (TPC-H, TPC-C, or the Join Order Benchmark) and measured
+latency as the reward is the essential next step; the pipeline already measures
+latency when a database connection is available, so the change is confined to the
+environment.
+
+\paragraph{Construct validity.}
+We measure \emph{reward} and the CL metrics derived from it, not downstream
+metrics such as end-to-end throughput or p99 latency. Reward is defined to be
+proportional to the operating cost, so this is a faithful proxy, but it is a
+proxy.
+
+\paragraph{Statistical validity.}
+We use eight seeds and paired tests. The replay-vs-online effect is large and
+consistent; the EWC-vs-no-EWC effect is smaller and, at short training budgets,
+not always significant. We therefore report EWC's benefit as suggestive rather
+than established, and we are explicit that the headline result is the robustness
+conferred by replay.
+
+\paragraph{Comparability.}
+The baselines are internal (KEEP/RANDOM/GREEDY-CREATE). A rigorous study must
+compare against published index advisors and learned optimizers
+\citep{chaudhuri1997autoadmin,valentin2000db2advisor,marcus2021bao} and against
+RL index selectors, on a shared benchmark. We view CLDB as complementary to those
+systems: any one of them could be substituted as the base policy.
+
+\paragraph{Scope of the RL claim.}
+The agent is value-based and off-policy (DQN). We do not claim a new RL
+algorithm; the contribution is the continual formulation and its
+database-specific instantiation. Likewise, the safety mask simplifies
+exploration but means the agent is never asked to learn that structurally invalid
+actions are bad---by design, since such exploration is unsafe.

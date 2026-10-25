@@ -1,6 +1,6 @@
 import pytest
 import numpy as np
-from cldb.vector_store import VectorStore
+from cldb.enhanced_vector_store import VectorStore
 
 
 def test_vector_store_init():
@@ -10,8 +10,9 @@ def test_vector_store_init():
 
 def test_vector_store_ensure_collection():
     vs = VectorStore(collection_name="test_ensure")
-    client = vs.client
-    coll = client.get_collection("test_ensure")
+    if not vs.is_connected:
+        pytest.skip("Qdrant is not available; vector store is using the in-memory fallback")
+    coll = vs.client.get_collection("test_ensure")
     assert coll.vectors_count == 0
 
 

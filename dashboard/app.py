@@ -1,4 +1,10 @@
+import sys
+from pathlib import Path
+
 import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from data import agent_metric, best_agent, load_results, results_path  # noqa: E402
 
 st.set_page_config(
     page_title="CLDB Research Dashboard",
@@ -78,39 +84,40 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.divider()
-st.header("Current System Status")
+st.header("Measured System Status")
 
-# Mock data for demonstration purposes
-# In a real environment, this would pull from the backend/Prometheus
-col1, col2, col3, col4 = st.columns(4)
+results = load_results()
+if results is None:
+    st.warning(
+        "No benchmark artifact found. Run `python experiments/run_rl_evaluation.py` "
+        "to populate `experiments/results/cl_results.json`; this page renders those "
+        "measurements rather than placeholder values."
+    )
+else:
+    best = best_agent(results, "Conflict")
+    config = results.get("config", {})
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Best conflict-phase reward", f"{agent_metric(results, best, 'Conflict'):.3f}",
+                  help="Mean final reward on the inverted-selectivity phases (2, 4, 5).")
+    with col2:
+        st.metric("Best ACC", f"{agent_metric(results, best, 'ACC'):.3f}",
+                  help="Average final performance over all phases.")
+    with col3:
+        st.metric("Best forgetting F", f"{agent_metric(results, best, 'F'):.3f}",
+                  help="Average drop from each phase's peak to final performance.")
+    with col4:
+        st.metric("Seeds", f"{len(config.get('seeds', []))}",
+                  help="Seeds the reported metrics are averaged over.")
 
-with col1:
-    st.metric(label="System Health", value="Healthy ✅")
-with col2:
-    st.metric(label="Continual Learning", value="Active 🧠")
-with col3:
-    st.metric(label="Replay Buffer", value="Active 📚", delta="542 queries", delta_color="normal")
-with col4:
-    st.metric(label="Drift Detection", value="Monitoring 👁️")
-
-st.divider()
-
-col5, col6, col7 = st.columns(3)
-
-with col5:
-    st.markdown("""
-    **Current Workload Phase**  
-    <span class="tooltip">Phase 2: Evolving Workload<span class="tooltiptext">A detected distribution of queries that differs from the initial phase, triggering the drift detector.</span></span>
-    """, unsafe_allow_html=True)
-
-with col6:
-    st.markdown("""
-    **Model Version**  
-    v2.4.1 (Replay+EWC)
-    """)
-
-with col7:
-    st.markdown("""
-    **Optimization Engine**  
-    Enabled (Confidence > 0.8)
-    """)
+    st.divider()
+    col5, col6, col7 = st.columns(3)
+    with col5:
+        st.markdown(f"**Leading agent**  \n{best}")
+    with col6:
+        st.markdown(f"**Benchmark**  \n{len(config.get('tasks', []))} phases · "
+                    f"{config.get('episodes', '?')} episodes/task · horizon {config.get('horizon', '?')}")
+    with col7:
+        st.markdown(f"**Config**  \nIndex budget {config.get('budget', '?')} · "
+                    f"CWIL weight via `CLDB_CF_WEIGHT`")
+    st.caption(f"Source: `{results_path()}`")

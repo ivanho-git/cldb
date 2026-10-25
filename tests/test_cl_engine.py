@@ -1,13 +1,15 @@
 import pytest
 import torch
-from cldb.cl_engine import CLEngine, EMBEDDING_DIM, CONTEXT_DIM
+from cldb.enhanced_cl_engine import CLEngine, EMBEDDING_DIM, CONTEXT_DIM
 
 
 def test_cl_engine_init():
-    engine = CLEngine(feature_dim=74, ewc_lambda=0.4, replay_mem_size=100)
+    engine = CLEngine(feature_dim=74)
     assert engine.model is not None
-    assert engine.ewc_plugin is not None
-    assert engine.replay_plugin is not None
+    assert engine.ewc is not None
+    assert engine.feature_dim == 74
+    assert engine.embedding_dim == EMBEDDING_DIM
+    assert engine.context_dim == CONTEXT_DIM
 
 
 def test_cl_engine_train_and_predict():

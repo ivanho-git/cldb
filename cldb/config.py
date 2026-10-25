@@ -59,6 +59,7 @@ class MLConfig:
     scheduler_patience: int = 3
     scheduler_factor: float = 0.5
     min_lr: float = 1e-6
+    checkpoint_dir: str = "models/checkpoints"
 
 
 @dataclass

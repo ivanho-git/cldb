@@ -1,0 +1,139 @@
+\section{Problem Formulation}
+\label{sec:problem}
+
+\subsection{Notation and the index-selection setting}
+Let \(q\) denote a SQL query and \(I\) a set of secondary indexes, where each
+element of \(I\) is a set of columns. Query \(q\) has a set of
+\emph{predicate columns} \(\pi(q)\) (the columns referenced in its
+\textsc{where}/\textsc{on} clauses), extracted by a SQL parser. For a
+(column, index) coverage relation we write \(\pi(q) \sqsubseteq I\) if some index
+in \(I\) contains all the predicate columns of \(q\).
+
+We model the operating cost of serving \(q\) under index configuration \(I\) as
+\begin{equation}
+  C(q, I) = L(q, I) + \rho\,|I|,
+  \label{eq:cost}
+\end{equation}
+where \(L(q,I)\) is the query latency and \(\rho\,|I|\) is an amortized
+maintenance/space cost charged per index per unit time. In our benchmark
+\(L(q,I)\) takes one of two values depending on whether the predicate is
+\emph{covered} \emph{and} \emph{selective}; in a real deployment \(L\) is
+measured directly. Let \(\operatorname{sel}(c, p)\) denote the selectivity of
+column \(c\) in phase \(p\) (a high-selectivity predicate benefits from an index;
+a low-selectivity one does not). Then
+\begin{equation}
+  L(q,I) =
+  \begin{cases}
+    \ell_{\text{low}} & \text{if } \pi(q)\sqsubseteq I \text{ and } \pi(q)
+      \text{ is selective for the phase,}\\
+    \ell_{\text{high}} & \text{otherwise,}
+  \end{cases}
+  \label{eq:latency}
+\end{equation}
+with \(\ell_{\text{low}} \ll \ell_{\text{high}}\). Creating an index incurs a
+one-time build cost \(\kappa\).
+
+\subsection{The index-selection MDP}
+We formulate a per-query decision problem as a Markov decision process (MDP)
+\(M = (\State, \Action, P, R, \gamma)\).
+
+\paragraph{State.}
+At step \(t\) the state concatenates four components,
+\begin{equation}
+  s_t = \big[\,\underbrace{\phi(q_t)}_{\in\R^{74}} \;\|\;
+   \underbrace{e(q_t)}_{\in\R^{384}} \;\|\;
+   \underbrace{c_t}_{\in\R^{3}} \;\|\;
+   \underbrace{\iota(I_t)}_{\in\R^{3}}\,\big] \in \R^{464},
+  \label{eq:state}
+\end{equation}
+where \(\phi(q)\) is a structural feature vector (join count, presence of
+\textsc{group by}/\textsc{order by}, estimated cardinality, and a hashed
+bag-of-words over tables and predicate columns), \(e(q)\) is a semantic
+embedding of the query text, \(c_t\) are normalized workload-context statistics
+(phase index, progress, index-utilization), and \(\iota(I_t)\) is the
+\emph{index-configuration state}
+\begin{equation}
+  \iota(I) = \big[\,|I|/B,\;\;
+    \mathbb{1}[\pi(q)\sqsubseteq I],\;\;
+    \max(0,(B-|I|)/B)\,\big],
+  \label{eq:indexstate}
+\end{equation}
+with index budget \(B\). The inclusion of \(\iota\) is what makes the problem a
+\emph{control} problem over index configurations rather than a one-shot
+classification: the same query has different optimal actions depending on which
+indexes are already present.
+
+\paragraph{Action.}
+\(\Action = \{0,1,2\}\) corresponding to
+\textsc{keep}, \textsc{create\_index} (on \(\pi(q_t)\)), and
+\textsc{drop\_index} (on \(\pi(q_t)\)). A structural mask
+\(\mu(s_t)\in\{0,1\}^{|\Action|}\) disables infeasible actions:
+\(\textsc{create}\) is allowed only if \(\pi(q_t)\neq\emptyset\) and
+\(|I_t|<B\); \(\textsc{drop}\) is allowed only if an index equal to
+\(\pi(q_t)\) is active.
+
+\paragraph{Transition.}
+Given \(a_t\), the index configuration updates deterministically,
+\begin{equation}
+  I_{t+1} =
+  \begin{cases}
+    I_t \cup \{\pi(q_t)\} & a_t=\textsc{create},\\
+    I_t \setminus \{\pi(q_t)\} & a_t=\textsc{drop},\\
+    I_t & a_t=\textsc{keep},
+  \end{cases}
+  \label{eq:transition}
+\end{equation}
+and the next query \(q_{t+1}\) is drawn from the current phase distribution.
+
+\paragraph{Reward.}
+The reward is the negative operating cost after the action, minus the build cost,
+\begin{equation}
+  R(s_t,a_t) = -\Big(L(q_t, I_{t+1}) + \rho|I_{t+1}|\Big)
+              - \kappa\,\mathbb{1}[a_t=\textsc{create}].
+  \label{eq:reward}
+\end{equation}
+Equation~\eqref{eq:reward} is dense, bounded, and directly tied to the quantity
+an operator cares about; it makes \textsc{create} a temporally extended decision
+(pay now, benefit later) and therefore justifies a discount factor \(\gamma<1\)
+and a value function.
+
+\paragraph{Objective.}
+The agent seeks a policy \(\pi_\theta:\State\to\Delta(\Action)\) maximizing the
+discounted return
+\begin{equation}
+  J(\theta) = \E_{\tau\sim\pi_\theta}\Big[\textstyle\sum_{t\ge0}\gamma^t R(s_t,a_t)\Big].
+  \label{eq:objective}
+\end{equation}
+The optimal action-value function satisfies the Bellman optimality equation
+\(Q^\star(s,a) = \E_{s'}[R(s,a) + \gamma\max_{a'} Q^\star(s',a')]\), and
+\(\pi^\star(s) = \arg\max_a Q^\star(s,a)\).
+
+\subsection{The continual setting}
+Unlike standard RL, the query distribution is \emph{non-stationary}. We model the
+stream as a sequence of \(T\) \emph{workload phases} (tasks)
+\(\mathcal{T}_1,\dots,\mathcal{T}_T\), where phase \(\mathcal{T}_i\) induces a
+query distribution \(P_i\) (and, through selectivity, a possibly different
+optimal policy). The agent observes one phase at a time and may not revisit old
+data unless it stores it. The \emph{continual objective} is to maximize the
+average performance over all phases after the stream has been processed, while
+not sacrificing adaptation speed:
+\begin{equation}
+  \max_\theta \; \frac{1}{T}\sum_{j=1}^{T} \E_{q\sim P_j, I}\big[\,R_\theta(q,I)\,\big].
+\end{equation}
+
+\subsection{Evaluation metrics}
+Following \citet{lopezpaz2017gem}, let \(R_{i,j}\) be the agent's mean reward on
+phase \(j\) after it has finished training on phase \(i\) (so \(\R\) is a
+\(T\times T\) lower-triangular matrix). Let \(b_j\) be the reward of a reference
+(here, a uniformly random policy) on phase \(j\). We report
+\begin{align}
+  \mathrm{ACC} &= \frac{1}{T}\sum_{j=1}^{T} R_{T,j}, \label{eq:acc}\\
+  \mathrm{BWT} &= \frac{1}{T}\sum_{j=1}^{T} \big(R_{T,j} - R_{j,j}\big), \label{eq:bwt}\\
+  \mathrm{FWT} &= \frac{1}{T}\sum_{j=1}^{T} \big(R_{j,j} - b_j\big), \label{eq:fwt}\\
+  \Fforget     &= \frac{1}{T}\sum_{j=1}^{T} \Big(\max_{i\in\{j,\dots,T\}} R_{i,j} - R_{T,j}\Big). \label{eq:forgetting}
+\end{align}
+\(\mathrm{ACC}\) measures final average quality, \(\mathrm{BWT}<0\) indicates
+forgetting of old phases, \(\mathrm{FWT}>0\) indicates positive transfer, and
+\(\Fforget\ge0\) is the average drop from each phase's peak to its final
+performance. A \emph{continual} agent should achieve high \(\mathrm{ACC}\),
+\(\mathrm{BWT}\approx0\) and \(\Fforget\approx0\).

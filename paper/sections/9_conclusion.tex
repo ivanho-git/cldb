@@ -1,0 +1,28 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We argued that autonomous index selection should be posed as a continual
+reinforcement-learning problem rather than a one-shot optimization, because
+production workloads drift and both offline retraining and naive online
+fine-tuning fail---the former is expensive, the latter forgets. We introduced
+CLDB, an index-aware DQN agent that combines drift-triggered elastic weight
+consolidation, database-aware prioritized replay, and safety-constrained
+exploration, all running off the query critical path. We gave a complete
+mathematical formulation, a theoretical analysis of the EWC objective, the
+value-network Fisher estimator, the prioritized-replay gradient, and the
+consolidation cost, and we built a reproducible benchmark of conflicting workload
+phases. Empirically, the agent that learns without replay forgets catastrophically
+while the replay-based agents retain previously learned phases and beat static,
+random and heuristic baselines.
+
+The clearest path to a definitive study is to replace the cost model with a real
+DBMS and a standard benchmark workload, add published index-advisor baselines,
+increase the number of seeds and phases, and make the EWC strength adaptive. We
+release the implementation and the benchmark so that these experiments can be
+run and extended.
+
+\paragraph{Reproducibility.}
+All code, the simulator, the benchmark harness and the figure-generation script
+are provided. The benchmark is configurable through environment variables and
+seeded; the paper's figures and tables are produced directly from the exported
+results file.

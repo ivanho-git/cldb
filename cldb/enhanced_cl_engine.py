@@ -128,10 +128,10 @@ class EnhancedCLEngine:
         self._cache_hits = 0
     
     def _quantize(self):
+        logger = get_logger("cl_engine")
         try:
             self.model = torch.quantization.quantize_dynamic(self.model, {nn.Linear}, dtype=torch.qint8)
             self._quantized = True
-            logger = get_logger("cl_engine")
             logger.info("Model quantized for faster inference")
         except Exception as e:
             logger.warning(f"Quantization failed: {e}")
@@ -287,13 +287,11 @@ class EnhancedCLEngine:
     @classmethod
     def load(cls, path: str, **kwargs) -> 'EnhancedCLEngine':
         checkpoint = torch.load(path, map_location='cpu')
-        engine = cls(
-            feature_dim=checkpoint["feature_dim"],
-            embedding_dim=checkpoint["embedding_dim"],
-            context_dim=checkpoint["context_dim"],
-            architecture=checkpoint.get("architecture", "standard"),
-            **kwargs
-        )
+        kwargs.setdefault("feature_dim", checkpoint["feature_dim"])
+        kwargs.setdefault("embedding_dim", checkpoint["embedding_dim"])
+        kwargs.setdefault("context_dim", checkpoint["context_dim"])
+        kwargs.setdefault("architecture", checkpoint.get("architecture", "standard"))
+        engine = cls(**kwargs)
         engine.model.load_state_dict(checkpoint["model_state_dict"])
         engine.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         return engine

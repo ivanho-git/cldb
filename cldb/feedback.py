@@ -1,5 +1,5 @@
 from cldb.metadata_repo import MetadataRepo, OptimizationDecision, ReplayBufferMetadata
-from cldb.vector_store import VectorStore
+from cldb.enhanced_vector_store import VectorStore
 import numpy as np
 
 

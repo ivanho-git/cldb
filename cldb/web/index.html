@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLDB — Live Index Advisor</title>
+  <link rel="stylesheet" href="/static/styles.css?v=4">
+</head>
+<body>
+<div class="app">
+  <header class="masthead">
+    <div class="identity">
+      <h1>CLDB</h1>
+      <p>Continual-learning database <span>/</span> live index advisor</p>
+    </div>
+
+    <div class="transport">
+      <button id="startBtn" class="tbtn primary">Start</button>
+      <button id="pauseBtn" class="tbtn">Pause</button>
+      <button id="stopBtn" class="tbtn">Stop</button>
+      <button id="resetBtn" class="tbtn ghost">Reset</button>
+    </div>
+  </header>
+
+  <div class="statusbar">
+    <span id="connPill" class="signal muted"><i></i><span id="connText">connecting</span></span>
+    <span id="runPill" class="signal muted"><i></i><span id="runText">idle</span></span>
+    <span id="clock" class="clock mono">00:00</span>
+    <span class="status-rule"></span>
+    <span class="status-note">online learning · non-blocking critical path</span>
+  </div>
+
+  <div id="errorBanner" class="error-banner hidden"></div>
+
+  <section class="readout" aria-label="Live metrics">
+    <div class="readout-item">
+      <span class="k">Throughput</span>
+      <span class="v"><b id="kpiQps">0</b><small>q/s</small></span>
+      <span class="s">target <span id="kpiQpsTarget">0</span></span>
+    </div>
+    <div class="readout-item">
+      <span class="k">Queries</span>
+      <span class="v" id="kpiQueries">0</span>
+      <span class="s"><span id="kpiSteps">0</span> decisions</span>
+    </div>
+    <div class="readout-item wide">
+      <span class="k">Phase</span>
+      <span class="v small" id="kpiPhase">—</span>
+      <span class="s" id="kpiPhaseSub">cycle 0 · 0 / 0</span>
+    </div>
+    <div class="readout-item">
+      <span class="k">Epsilon</span>
+      <span class="v" id="kpiEpsilon">1.000</span>
+      <span class="s">exploration</span>
+    </div>
+    <div class="readout-item">
+      <span class="k">Replay</span>
+      <span class="v"><b id="kpiReplay">0</b><small id="kpiReplayCap">/0</small></span>
+      <span class="s"><span id="kpiUpdates">0</span> updates</span>
+    </div>
+    <div class="readout-item">
+      <span class="k">Drift</span>
+      <span class="v"><b id="kpiDrift">0</b><small>/</small><b id="kpiConsolidations">0</b></span>
+      <span class="s">detected / consolidated</span>
+    </div>
+  </section>
+
+  <main class="layout">
+    <section class="panel scope">
+      <div class="panel-head">
+        <h2><span class="num">01</span> Traffic oscilloscope</h2>
+        <div class="legend">
+          <span><i class="key lime"></i>smoothed</span>
+          <span><i class="key steel"></i>raw</span>
+          <span><i class="key amber"></i>conflict phase</span>
+        </div>
+      </div>
+      <canvas id="trafficChart"></canvas>
+      <div class="scope-foot">
+        <span>200-step reward window</span>
+        <span>phase boundaries marked</span>
+      </div>
+    </section>
+
+    <aside class="panel inspector">
+      <div class="panel-head">
+        <h2><span class="num">02</span> Decision</h2>
+        <span id="exploreBadge" class="mini-badge hidden">exploring</span>
+      </div>
+
+      <div class="action-hero">
+        <span id="actionBadge" class="action-badge keep">KEEP</span>
+        <div class="action-meta">
+          <span>reward <b id="curReward">—</b></span>
+          <span>latency <b id="curLatency">—</b></span>
+          <span>indexes <b id="curIndexes">0</b></span>
+        </div>
+      </div>
+
+      <div id="currentQuery" class="query mono">—</div>
+      <div class="hint mono" id="decisionHint">waiting for traffic</div>
+
+      <div class="q-block">
+        <div class="block-label">Action values</div>
+        <div id="qBars" class="q-bars"></div>
+      </div>
+
+      <div class="chip-block">
+        <div class="block-label">Predicate</div>
+        <div id="predicateChips" class="chips"></div>
+        <div class="block-label">Index configuration</div>
+        <div id="indexChips" class="chips"></div>
+      </div>
+    </aside>
+
+    <section class="panel phase-tape">
+      <div class="panel-head">
+        <h2><span class="num">03</span> Workload phases</h2>
+        <span class="panel-note">mean reward per phase · conflict phases invert the optimal action</span>
+      </div>
+      <div id="phaseBars" class="phase-tape-grid"></div>
+    </section>
+
+    <section class="panel learner">
+      <div class="panel-head">
+        <h2><span class="num">04</span> Learner</h2>
+        <span class="panel-note">off the critical path</span>
+      </div>
+
+      <div class="epsilon-row">
+        <span class="epsilon-value" id="epsilonValue">1.000</span>
+        <div class="track"><div id="epsilonBar" class="track-fill lime"></div></div>
+      </div>
+
+      <div class="stat-grid">
+        <div><span>updates</span><b id="statUpdates">0</b></div>
+        <div><span>replay</span><b id="statReplay">0</b></div>
+        <div><span>loss</span><b id="statLoss">0.000</b></div>
+        <div><span>td error</span><b id="statTd">0.000</b></div>
+        <div><span>ewc penalty</span><b id="statEwc">0.000</b></div>
+        <div><span>cf updates</span><b id="statCf">0</b></div>
+      </div>
+
+      <div class="phase-box">
+        <div class="phase-line">
+          <span id="phaseName">—</span>
+          <span id="phaseBadge" class="mini-badge hidden">conflict</span>
+        </div>
+        <div class="track slim"><div id="phaseBar" class="track-fill steel"></div></div>
+        <div class="phase-meta"><span id="phaseSteps">0 / 0</span><span id="phaseCycle">cycle 0</span></div>
+      </div>
+    </section>
+
+    <section class="panel mix">
+      <div class="panel-head">
+        <h2><span class="num">05</span> Action mix</h2>
+      </div>
+      <div id="actionMix" class="action-mix"></div>
+    </section>
+
+    <section class="panel controls">
+      <div class="panel-head">
+        <h2><span class="num">06</span> Controls</h2>
+      </div>
+
+      <div class="control-row">
+        <label for="qpsRange">Traffic rate</label>
+        <output id="qpsOut" class="mono">60 q/s</output>
+      </div>
+      <input id="qpsRange" type="range" min="5" max="300" step="5" value="60">
+
+      <div class="control-row">
+        <label for="phaseRange">Phase length</label>
+        <output id="phaseOut" class="mono">400 steps</output>
+      </div>
+      <input id="phaseRange" type="range" min="100" max="1200" step="50" value="400">
+
+      <div class="toggles">
+        <label class="toggle"><input id="learningToggle" type="checkbox" checked><span>learning</span></label>
+        <label class="toggle"><input id="ewcToggle" type="checkbox" checked><span>ewc</span></label>
+        <label class="toggle"><input id="cwilToggle" type="checkbox"><span>cwil</span></label>
+      </div>
+      <p class="hint">CWIL is experimental: it helps silent drift but was not a win on the full sequence.</p>
+    </section>
+
+    <section class="panel log">
+      <div class="panel-head">
+        <h2><span class="num">07</span> Decision log</h2>
+        <span class="panel-note">newest first · raw action values</span>
+      </div>
+      <div class="log-head">
+        <span>step</span><span>phase</span><span>query</span><span>action</span><span>reward</span><span>q(keep / create / drop)</span>
+      </div>
+      <div id="recentBody" class="log-body"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span>FastAPI · WebSocket · PyTorch DQN</span>
+    <span>drift-triggered EWC · database-aware prioritized replay · structural masking</span>
+  </footer>
+</div>
+<script src="/static/app.js?v=4"></script>
+</body>
+</html>
